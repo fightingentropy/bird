@@ -1,0 +1,12 @@
+/target
+/dist
+/.idea
+/.DS_Store
+/.git.scaffold
+**/.git.scaffold
+*.log
+*.sqlite
+*.binarycookies
+*.tmp
+*.orig
+/tests/live-output
