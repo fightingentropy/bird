@@ -12,7 +12,7 @@ Fast X/Twitter CLI in Rust.
 - Read and write commands
 - JSON output for scripting
 - Media upload support
-- Optional `curl-impersonate` transport for stronger browser fingerprint parity
+- Built-in `curl-impersonate` support with auto-detection for stronger browser fingerprint parity
 
 ## Install
 
@@ -148,7 +148,7 @@ Useful environment variables:
 
 By default, `bird` uses libcurl with HTTP/2 and compressed responses enabled.
 
-If an impersonation-capable curl binary is available, `bird` can use it automatically for X/Twitter hosts. You can also set one explicitly:
+For best X/Twitter parity, install `curl-impersonate`. When an impersonation-capable curl binary is available, `bird` detects it automatically and uses it for X/Twitter hosts. You can also set one explicitly:
 
 ```bash
 export BIRD_CURL_BIN=/opt/homebrew/bin/curl-impersonate-chrome
