@@ -1,52 +1,177 @@
-# bird-workspace
+# bird
 
-Native Rust rewrite of `sweet-cookie` and `bird`.
+Fast X/Twitter CLI in Rust.
 
-## Layout
+`bird` reads your existing browser session, talks to X with browser-like requests, and gives you a native CLI for timelines, tweets, profiles, lists, and common account actions.
 
-- `crates/sweet-cookie`: browser cookie extraction library plus diagnostic binary
-- `crates/bird-core`: auth, transport, query-id cache, and Twitter/X client logic
-- `crates/bird-cli`: user-facing CLI compatible with the current JS `bird`
+## Highlights
 
-## Current Status
+- Native Rust CLI
+- Safari-first cookie resolution on macOS
+- Supports Safari, Chrome, and Firefox cookies
+- Read and write commands
+- JSON output for scripting
+- Media upload support
+- Optional `curl-impersonate` transport for stronger browser fingerprint parity
 
-- JS parity baseline captured in [`docs/parity.md`](/Users/erlinhoxha/Developer/bird-workspace/docs/parity.md)
-- Rust packaging, live-smoke, cutover, and rollback instructions live in [`docs/cutover.md`](/Users/erlinhoxha/Developer/bird-workspace/docs/cutover.md)
-- `sweet-cookie` is implemented with Safari, Chromium, Firefox, and inline cookie sources
-- `bird-core` resolves credentials, verifies cookies, caches query IDs, generates native `x-client-transaction-id` headers, and serves the authenticated read stack over a tuned libcurl transport with optional external curl impersonation support
-- `bird` currently supports: `check`, `whoami`, `query-ids`, `tweet`, `reply`, `unbookmark`, `follow`, `unfollow`, `likes`, `bookmarks`, `following`, `followers`, `about`, `lists`, `list-timeline`, `news`/`trending`, `home`, `read`, `replies`, `thread`, `search`, `mentions`, `user-tweets`, plus `bird <tweet-id-or-url>` shorthand
-- Text tweet/reply, media upload, bookmark removal, follow/unfollow, bookmark timelines, news/trending, the main account/list read commands, release packaging, and cutover tooling are implemented; destructive live write validation remains opt-in because it mutates real account state
+## Install
 
-## Running
+### From a release archive
+
+Download a release archive for your platform, extract it, and place `bird` somewhere on your `PATH`.
 
 ```bash
-cargo run -p bird-cli -- check
-cargo run -p bird-cli -- whoami
-cargo run -p bird-cli -- tweet "hello from rust bird"
-cargo run -p bird-cli -- follow @example
-cargo run -p bird-cli -- likes -n 5 --json
-cargo run -p bird-cli -- bookmarks -n 5 --json
-cargo run -p bird-cli -- following -n 20 --json
-cargo run -p bird-cli -- about @example --json
-cargo run -p bird-cli -- news -n 5 --json
-cargo run -p bird-cli -- home -n 5 --json
-cargo run -p bird-cli -- search "from:MoonOverlord" -n 3 --json
-./scripts/package-release.sh
-BIRD_BIN=./target/release/bird ./scripts/live-smoke.sh
-./scripts/cutover-rust-bird.sh
+tar -xzf bird-v0.1.0-aarch64-apple-darwin.tar.gz
+install -m 755 bird-v0.1.0-aarch64-apple-darwin/bin/bird /usr/local/bin/bird
 ```
 
-## Transport Notes
+The release archive also includes `sweet-cookie-diagnose`, a small troubleshooting binary for cookie inspection.
 
-- Default transport: in-process libcurl with HTTP/2 and compressed-response support enabled
-- Auto-detected external transport: if `curl-impersonate-chrome` or other supported binaries are on `PATH`, `bird` will prefer them automatically for X/Twitter hosts
-- Optional external transport: set `BIRD_CURL_BIN` to a curl-compatible binary to route X/Twitter traffic through that executable
-- Optional impersonation flag: set `BIRD_CURL_IMPERSONATE` when the configured binary supports `--impersonate`
-- `curl-impersonate-chrome` receives Chrome transport-profile flags directly from `bird`, so Rust keeps control of auth headers while the external binary supplies the browser-like TLS/HTTP2 behavior
+### From source
 
-## Reference Snapshots
+```bash
+git clone https://github.com/fightingentropy/bird-rs.git
+cd bird-rs
+cargo build --locked --release -p bird-cli
+install -m 755 target/release/bird /usr/local/bin/bird
+```
 
-These repos remain the current JS references and should not be edited as part of the rewrite:
+## Authentication
 
-- `/Users/erlinhoxha/Developer/sweet-cookie`
-- `/Users/erlinhoxha/Developer/bird`
+`bird` resolves credentials in this order:
+
+1. `--auth-token` and `--ct0`
+2. `AUTH_TOKEN` / `TWITTER_AUTH_TOKEN` and `CT0` / `TWITTER_CT0`
+3. cached verified cookies
+4. browser cookies
+
+Default browser order on macOS:
+
+1. Safari
+2. Chrome
+3. Firefox
+
+Quick check:
+
+```bash
+bird check
+bird whoami
+```
+
+If you are already logged into `x.com` in Safari, that is usually enough.
+
+## Usage
+
+### Read commands
+
+```bash
+bird home -n 5
+bird home --following -n 5
+bird search "from:elonmusk" -n 10
+bird read 1234567890123456789
+bird replies 1234567890123456789
+bird thread 1234567890123456789
+bird mentions -n 10
+bird user-tweets jack -n 20
+bird likes -n 20 --json
+bird bookmarks -n 20
+bird about nasa --json
+bird lists
+bird list-timeline 123456789012345678 -n 20
+bird news -n 10
+bird query-ids --fresh --json
+```
+
+`bird <tweet-id-or-url>` also works as shorthand for `bird read ...`.
+
+### Write commands
+
+```bash
+bird tweet "hello from bird"
+bird reply 1234567890123456789 "reply from bird"
+bird tweet "photo post" --media ./photo.jpg --alt "alt text"
+bird follow MoonOverlord
+bird unfollow MoonOverlord
+bird unbookmark 1234567890123456789
+```
+
+## Output modes
+
+- Default output is human-readable terminal output
+- `--json` prints structured JSON
+- `--json-full` requests richer API payloads on supported read commands
+- `--plain`, `--no-emoji`, and `--no-color` reduce formatting
+
+## Config
+
+`bird` reads these config files:
+
+- `~/.config/bird/config.json5`
+- `./.birdrc.json5`
+
+Local config overrides global config.
+
+Example:
+
+```json5
+{
+  cookieSource: ["safari", "chrome", "firefox"],
+  timeoutMs: 30000,
+  cookieTimeoutMs: 30000,
+  quoteDepth: 3,
+  chromeProfile: "Default"
+}
+```
+
+Useful flags:
+
+- `--cookie-source safari|chrome|firefox`
+- `--chrome-profile <name>`
+- `--chrome-profile-dir <path>`
+- `--firefox-profile <path>`
+- `--timeout <ms>`
+- `--cookie-timeout <ms>`
+- `--quote-depth <n>`
+
+Useful environment variables:
+
+- `AUTH_TOKEN`
+- `CT0`
+- `TWITTER_AUTH_TOKEN`
+- `TWITTER_CT0`
+- `BIRD_TIMEOUT_MS`
+- `BIRD_COOKIE_TIMEOUT_MS`
+- `BIRD_QUOTE_DEPTH`
+- `TWITTER_PROXY`
+
+## Transport
+
+By default, `bird` uses libcurl with HTTP/2 and compressed responses enabled.
+
+If an impersonation-capable curl binary is available, `bird` can use it automatically for X/Twitter hosts. You can also set one explicitly:
+
+```bash
+export BIRD_CURL_BIN=/opt/homebrew/bin/curl-impersonate-chrome
+bird home -n 5
+```
+
+If your curl binary supports `--impersonate`, you can also set:
+
+```bash
+export BIRD_CURL_IMPERSONATE=chrome136
+```
+
+## Platform notes
+
+- macOS is the primary target
+- Safari cookie support is included
+- Chrome and Firefox cookie support are included
+- Linux and Windows are not the primary support target yet
+
+## Build a release
+
+```bash
+./scripts/package-release.sh
+```
+
+That produces a versioned tarball in `dist/`.

@@ -15,22 +15,19 @@ RUSTC_VERSION="$(rustc -V)"
 
 mkdir -p "$DIST_DIR"
 rm -rf "$PACKAGE_DIR"
-mkdir -p "$PACKAGE_DIR/bin" "$PACKAGE_DIR/docs"
+mkdir -p "$PACKAGE_DIR/bin"
 
 cargo build --locked --release -p bird-cli --bin bird -p sweet-cookie --bin diagnose
 
 cp "$ROOT_DIR/target/release/bird" "$PACKAGE_DIR/bin/bird"
 cp "$ROOT_DIR/target/release/diagnose" "$PACKAGE_DIR/bin/sweet-cookie-diagnose"
 cp "$ROOT_DIR/README.md" "$PACKAGE_DIR/README.md"
-cp "$ROOT_DIR/docs/parity.md" "$PACKAGE_DIR/docs/parity.md"
-cp "$ROOT_DIR/docs/cutover.md" "$PACKAGE_DIR/docs/cutover.md"
 
 cat > "$PACKAGE_DIR/BUILD-INFO.txt" <<EOF
 version: $VERSION
 target: $TARGET_TRIPLE
 built_at_utc: $BUILD_DATE
 rustc: $RUSTC_VERSION
-workspace: $ROOT_DIR
 EOF
 
 rm -f "$ARCHIVE_PATH" "$CHECKSUM_PATH"
