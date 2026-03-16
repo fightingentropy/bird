@@ -1,0 +1,3 @@
+Repository: https://github.com/lexiforest/curl-impersonate
+Tag: v1.5.1
+Commit: 78ff740b21c0911d63c6ee31b55a11a7c2f293cf

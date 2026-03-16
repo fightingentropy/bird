@@ -12,7 +12,7 @@ Fast X/Twitter CLI in Rust.
 - Read and write commands
 - JSON output for scripting
 - Media upload support
-- Built-in `curl-impersonate` support with auto-detection for stronger browser fingerprint parity
+- Native macOS `libcurl-impersonate` integration for stronger browser fingerprint parity
 
 ## Install
 
@@ -36,6 +36,14 @@ cargo build --locked --release -p bird-cli
 install -m 755 target/release/bird /usr/local/bin/bird
 ```
 
+On macOS, the native impersonation build expects these tools on `PATH`:
+
+```bash
+brew install pkg-config make cmake ninja go
+```
+
+The repo vendors the macOS source archives needed by `libcurl-impersonate` under `third_party/curl-impersonate/distfiles/`, so the native build is network-free after clone. The remaining helpers used by the vendored transport (`patch`, `tar`, `unzip`) are available in a standard macOS install.
+
 ## Authentication
 
 `bird` resolves credentials in this order:
@@ -54,6 +62,7 @@ Default browser order on macOS:
 Quick check:
 
 ```bash
+bird transport
 bird check
 bird whoami
 ```
@@ -148,18 +157,23 @@ Useful environment variables:
 
 By default, `bird` uses libcurl with HTTP/2 and compressed responses enabled.
 
-For best X/Twitter parity, install `curl-impersonate`. When an impersonation-capable curl binary is available, `bird` detects it automatically and uses it for X/Twitter hosts. You can also set one explicitly:
+On native macOS builds, `bird` links a vendored `libcurl-impersonate` and applies it automatically for X/Twitter hosts while keeping request headers under `bird`'s control. The vendored build is cached under `target/curl-impersonate-cache/`.
+
+Inspect the active transport configuration without making a network request:
 
 ```bash
-export BIRD_CURL_BIN=/opt/homebrew/bin/curl-impersonate-chrome
-bird home -n 5
+bird transport
+bird transport --json
 ```
 
-If your curl binary supports `--impersonate`, you can also set:
+You can override the native impersonation profile at runtime:
 
 ```bash
 export BIRD_CURL_IMPERSONATE=chrome136
+bird home -n 5
 ```
+
+Non-macOS builds keep the plain libcurl transport path.
 
 ## Platform notes
 

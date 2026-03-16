@@ -26,7 +26,7 @@ pub use query_ids::{
     target_query_id_operations, RuntimeQueryIdStore,
 };
 pub use transaction_id::RuntimeTransactionIdStore;
-pub use transport::{CurlTransport, HttpRequest, HttpResponse, HttpTransport};
+pub use transport::{CurlTransport, HttpRequest, HttpResponse, HttpTransport, TransportInfo};
 pub use types::{
     AboutProfile, BookmarkMutationResult, CookieSource, CurrentUser, FollowMutationResult,
     MediaUploadResult, NewsItem, QueryIdSnapshot, ResolveCredentialsOptions, ResolvedCredentials,

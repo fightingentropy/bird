@@ -1,0 +1,17 @@
+[package]
+name = "bird-curl-impersonate-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+links = "bird-curl-impersonate"
+
+[dependencies]
+curl-sys.workspace = true
+
+[build-dependencies]
+cc = "1.2.40"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true

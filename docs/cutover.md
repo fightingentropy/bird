@@ -25,26 +25,28 @@ This emits:
 Run the live read stack against a chosen binary:
 
 ```bash
+./target/release/bird transport --json
 BIRD_BIN=./target/release/bird ./scripts/live-smoke.sh
 ```
 
 For transport experiments:
 
 ```bash
-BIRD_CURL_BIN=/usr/bin/curl BIRD_BIN=./target/release/bird ./scripts/live-smoke.sh
+BIRD_CURL_IMPERSONATE=chrome136 BIRD_BIN=./target/release/bird ./scripts/live-smoke.sh
 ```
 
-If you install a real impersonation-capable curl build, you can point `bird` at it:
+On native macOS builds, `bird` links the vendored impersonation-capable libcurl directly. You can override the profile with:
 
 ```bash
-BIRD_CURL_BIN=/path/to/curl-impersonate BIRD_CURL_IMPERSONATE=chrome136 bird whoami
+BIRD_CURL_IMPERSONATE=chrome145 bird transport --json
+BIRD_CURL_IMPERSONATE=chrome145 bird whoami
 ```
 
-On this machine, March 10, 2026:
+On this machine, March 16, 2026:
 
-- `shakacode/brew/curl-impersonate` was installed successfully
-- `/opt/homebrew/bin/curl-impersonate-chrome` is available
-- `bird` auto-detects that binary and uses Chrome transport-profile flags for X/Twitter hosts
+- the Rust build links vendored `libcurl-impersonate` on macOS
+- the default runtime profile is `chrome136`
+- the vendored macOS build cache lives under `target/curl-impersonate-cache/`
 
 The default smoke run covers:
 
