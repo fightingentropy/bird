@@ -4,23 +4,34 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="$(awk -F'"' '/^version = / {print $2; exit}' "$ROOT_DIR/Cargo.toml")"
-TARGET_TRIPLE="$(rustc -Vv | awk '/^host:/ { print $2 }')"
+HOST_TRIPLE="$(rustc -Vv | awk '/^host:/ { print $2 }')"
+TARGET_TRIPLE="${TARGET_TRIPLE:-$HOST_TRIPLE}"
 DIST_DIR="${DIST_DIR:-$ROOT_DIR/dist}"
 PACKAGE_NAME="bird-v${VERSION}-${TARGET_TRIPLE}"
 PACKAGE_DIR="$DIST_DIR/$PACKAGE_NAME"
 ARCHIVE_PATH="$DIST_DIR/${PACKAGE_NAME}.tar.gz"
 CHECKSUM_PATH="${ARCHIVE_PATH}.sha256"
+TARGET_RELEASE_DIR="$ROOT_DIR/target/${TARGET_TRIPLE}/release"
 BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 RUSTC_VERSION="$(rustc -V)"
+
+case "$TARGET_TRIPLE" in
+  aarch64-apple-darwin|x86_64-unknown-linux-gnu)
+    ;;
+  *)
+    echo "error: bird release packaging supports only aarch64-apple-darwin and x86_64-unknown-linux-gnu (target=${TARGET_TRIPLE}, host=${HOST_TRIPLE})" >&2
+    exit 1
+    ;;
+esac
 
 mkdir -p "$DIST_DIR"
 rm -rf "$PACKAGE_DIR"
 mkdir -p "$PACKAGE_DIR/bin"
 
-cargo build --locked --release -p bird-cli --bin bird -p sweet-cookie --bin diagnose
+cargo build --locked --release --target "$TARGET_TRIPLE" -p bird-cli --bin bird -p sweet-cookie --bin diagnose
 
-cp "$ROOT_DIR/target/release/bird" "$PACKAGE_DIR/bin/bird"
-cp "$ROOT_DIR/target/release/diagnose" "$PACKAGE_DIR/bin/sweet-cookie-diagnose"
+cp "$TARGET_RELEASE_DIR/bird" "$PACKAGE_DIR/bin/bird"
+cp "$TARGET_RELEASE_DIR/diagnose" "$PACKAGE_DIR/bin/sweet-cookie-diagnose"
 cp "$ROOT_DIR/README.md" "$PACKAGE_DIR/README.md"
 
 cat > "$PACKAGE_DIR/BUILD-INFO.txt" <<EOF
