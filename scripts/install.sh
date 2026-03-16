@@ -116,7 +116,9 @@ if [[ -z "$VERSION" ]]; then
 fi
 [[ -n "$VERSION" ]] || fail "could not resolve a release version for ${REPO}"
 
-PACKAGE_NAME="bird-${VERSION}-${TARGET}"
+RELEASE_TAG="v${VERSION#v}"
+RELEASE_VERSION="${VERSION#v}"
+PACKAGE_NAME="bird-v${RELEASE_VERSION}-${TARGET}"
 ARCHIVE_NAME="${PACKAGE_NAME}.tar.gz"
 CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
 
@@ -124,8 +126,8 @@ if [[ -n "$RELEASE_BASE_URL" ]]; then
   ARCHIVE_URL="${RELEASE_BASE_URL%/}/${ARCHIVE_NAME}"
   CHECKSUM_URL="${RELEASE_BASE_URL%/}/${CHECKSUM_NAME}"
 else
-  ARCHIVE_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE_NAME}"
-  CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/${CHECKSUM_NAME}"
+  ARCHIVE_URL="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${ARCHIVE_NAME}"
+  CHECKSUM_URL="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${CHECKSUM_NAME}"
 fi
 
 TMP_DIR="$(mktemp -d)"
