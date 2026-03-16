@@ -31,7 +31,7 @@ pub unsafe fn easy_impersonate(
     _target: *const c_char,
     _default_headers: c_int,
 ) -> EasyCode {
-    curl_sys::CURLE_NOT_BUILT_IN
+    curl_sys::CURLE_FAILED_INIT
 }
 
 pub const fn native_impersonation_enabled() -> bool {

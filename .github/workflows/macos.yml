@@ -21,7 +21,7 @@ jobs:
       - name: Install Prerequisites
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
-        run: brew install pkg-config make cmake ninja go
+        run: brew install pkg-config make cmake ninja go autoconf automake libtool
 
       - name: Capture Compiler Stamp
         id: compiler-stamp
@@ -79,7 +79,7 @@ jobs:
       - name: Install Prerequisites
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
-        run: brew install pkg-config make cmake ninja go
+        run: brew install pkg-config make cmake ninja go autoconf automake libtool
 
       - name: Capture Compiler Stamp
         id: compiler-stamp
@@ -124,7 +124,7 @@ jobs:
         if: runner.os == 'macOS'
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
-        run: brew install pkg-config make cmake ninja go
+        run: brew install pkg-config make cmake ninja go autoconf automake libtool
 
       - name: Install Prerequisites (Linux)
         if: runner.os == 'Linux'
