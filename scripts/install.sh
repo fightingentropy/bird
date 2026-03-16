@@ -6,7 +6,6 @@ REPO="${BIRD_GITHUB_REPO:-fightingentropy/bird}"
 INSTALL_DIR="${BIRD_INSTALL_DIR:-$HOME/.local/bin}"
 RELEASE_BASE_URL="${BIRD_RELEASE_BASE_URL:-}"
 VERSION="${BIRD_VERSION:-}"
-TARGET="${BIRD_TARGET:-}"
 BINARIES="${BIRD_BINARIES:-bird,sweet-cookie-diagnose}"
 
 log() {
@@ -32,17 +31,11 @@ detect_target() {
     Darwin:arm64|Darwin:aarch64)
       printf 'aarch64-apple-darwin\n'
       ;;
-    Darwin:x86_64)
-      printf 'x86_64-apple-darwin\n'
-      ;;
     Linux:x86_64)
       printf 'x86_64-unknown-linux-gnu\n'
       ;;
-    Linux:arm64|Linux:aarch64)
-      printf 'aarch64-unknown-linux-gnu\n'
-      ;;
     *)
-      fail "unsupported platform ${os}/${arch}"
+      fail "unsupported platform ${os}/${arch}; bird installer supports only macOS Apple Silicon and Linux x64"
       ;;
   esac
 }
@@ -112,9 +105,7 @@ require_tool curl
 require_tool tar
 require_tool install
 
-if [[ -z "$TARGET" ]]; then
-  TARGET="$(detect_target)"
-fi
+TARGET="$(detect_target)"
 
 if [[ -n "$RELEASE_BASE_URL" && -z "$VERSION" ]]; then
   fail "BIRD_VERSION is required when BIRD_RELEASE_BASE_URL is set"

@@ -30,13 +30,22 @@ Useful overrides:
 - `BIRD_VERSION=v0.1.0`
 - `BIRD_GITHUB_REPO=fightingentropy/bird`
 
+Current installer/release targets: macOS Apple Silicon and Linux x64.
+
 ### From a release archive
 
-Download a release archive for your platform, extract it, and place `bird` somewhere on your `PATH`.
+Download the matching release archive for your platform, extract it, and place `bird` somewhere on your `PATH`.
 
 ```bash
 tar -xzf bird-v0.1.0-aarch64-apple-darwin.tar.gz
 install -m 755 bird-v0.1.0-aarch64-apple-darwin/bin/bird /usr/local/bin/bird
+```
+
+Linux x64 uses the corresponding archive name:
+
+```bash
+tar -xzf bird-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+install -m 755 bird-v0.1.0-x86_64-unknown-linux-gnu/bin/bird /usr/local/bin/bird
 ```
 
 The release archive also includes `sweet-cookie-diagnose`, a small troubleshooting binary for cookie inspection.
@@ -191,10 +200,11 @@ Non-macOS builds keep the plain libcurl transport path.
 
 ## Platform notes
 
-- macOS is the primary target
-- Safari cookie support is included
-- Chrome and Firefox cookie support are included
-- Linux and Windows are not the primary support target yet
+- macOS Apple Silicon and Linux x64 are the supported release targets
+- macOS Apple Silicon builds include the native impersonation transport
+- Linux x64 builds use the plain libcurl transport path
+- Safari cookie support is included on macOS
+- Chrome and Firefox cookie support are included on supported platforms
 
 ## Build a release
 
