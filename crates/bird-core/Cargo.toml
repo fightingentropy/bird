@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bird-curl-impersonate-sys = { path = "../bird-curl-impersonate-sys" }
 base64.workspace = true
 curl.workspace = true
 dirs.workspace = true

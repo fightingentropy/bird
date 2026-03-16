@@ -103,6 +103,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "bird-curl-impersonate-sys",
  "curl",
  "dirs",
  "hex",
@@ -118,6 +119,17 @@ dependencies = [
  "thiserror",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "bird-curl-impersonate-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "curl-sys",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

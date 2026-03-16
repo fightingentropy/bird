@@ -9,7 +9,7 @@ use std::time::Duration;
 use bird_core::{
     AboutProfile, CurrentUser, CurlTransport, NewsItem, QueryIdSnapshot,
     ResolveCredentialsOptions, RuntimeQueryIdStore, TweetData, TwitterClient,
-    TwitterClientOptions, TwitterCookies, TwitterList, TwitterUser, UsersPage,
+    TransportInfo, TwitterClientOptions, TwitterCookies, TwitterList, TwitterUser, UsersPage,
     build_cookie_header_from_cookies,
     refresh_features_cache, resolve_credentials, target_query_id_operations,
 };
@@ -19,6 +19,7 @@ use serde_json::json;
 
 const KNOWN_COMMANDS: &[&str] = &[
     "check",
+    "transport",
     "whoami",
     "query-ids",
     "tweet",
@@ -146,6 +147,10 @@ struct GlobalOptions {
 #[derive(Debug, Clone, Subcommand)]
 enum Commands {
     Check,
+    Transport {
+        #[arg(long)]
+        json: bool,
+    },
     Whoami,
     Tweet {
         text: String,
@@ -539,6 +544,7 @@ fn run() -> CliResult<()> {
 
     match cli.command {
         Commands::Check => run_check(&context, &cli.global),
+        Commands::Transport { json } => run_transport(json),
         Commands::Whoami => run_whoami(&context, &cli.global),
         Commands::Tweet { text } => run_tweet(&context, &cli.global, &text),
         Commands::Reply {
@@ -808,6 +814,42 @@ fn run() -> CliResult<()> {
             json,
             json_full,
         ),
+    }
+}
+
+fn run_transport(json: bool) -> CliResult<()> {
+    let info = transport_from_env().info();
+    if json {
+        println!("{}", to_pretty_json(&info)?);
+    } else {
+        print_transport_info(&info);
+    }
+
+    if info.valid {
+        return Ok(());
+    }
+
+    Err(CliError::runtime(
+        info.error
+            .clone()
+            .unwrap_or_else(|| "invalid transport configuration".to_owned()),
+    ))
+}
+
+fn print_transport_info(info: &TransportInfo) {
+    println!("backend: {}", info.backend);
+    println!("mode: {}", info.mode);
+    println!("platform: {}", info.platform);
+    if let Some(profile) = &info.profile {
+        println!("profile: {profile}");
+    }
+    if let Some(profile_source) = info.profile_source {
+        println!("profile_source: {profile_source}");
+    }
+    println!("scope: {}", info.scope);
+    println!("valid: {}", info.valid);
+    if let Some(error) = &info.error {
+        println!("error: {error}");
     }
 }
 
