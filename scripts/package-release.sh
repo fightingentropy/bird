@@ -32,7 +32,10 @@ EOF
 
 rm -f "$ARCHIVE_PATH" "$CHECKSUM_PATH"
 tar -C "$DIST_DIR" -czf "$ARCHIVE_PATH" "$PACKAGE_NAME"
-shasum -a 256 "$ARCHIVE_PATH" > "$CHECKSUM_PATH"
+(
+  cd "$DIST_DIR"
+  shasum -a 256 "$(basename "$ARCHIVE_PATH")" > "$CHECKSUM_PATH"
+)
 
 echo "Created release package:"
 echo "  archive: $ARCHIVE_PATH"

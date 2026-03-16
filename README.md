@@ -16,6 +16,20 @@ Fast X/Twitter CLI in Rust.
 
 ## Install
 
+### One-command install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fightingentropy/bird/main/scripts/install.sh | bash
+```
+
+By default that installs `bird` and `sweet-cookie-diagnose` into `~/.local/bin`.
+
+Useful overrides:
+
+- `BIRD_INSTALL_DIR=/usr/local/bin`
+- `BIRD_VERSION=v0.1.0`
+- `BIRD_GITHUB_REPO=fightingentropy/bird`
+
 ### From a release archive
 
 Download a release archive for your platform, extract it, and place `bird` somewhere on your `PATH`.
@@ -30,8 +44,8 @@ The release archive also includes `sweet-cookie-diagnose`, a small troubleshooti
 ### From source
 
 ```bash
-git clone https://github.com/fightingentropy/bird-rs.git
-cd bird-rs
+git clone https://github.com/fightingentropy/bird.git
+cd bird
 cargo build --locked --release -p bird-cli
 install -m 755 target/release/bird /usr/local/bin/bird
 ```
