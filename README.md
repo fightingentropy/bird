@@ -62,7 +62,7 @@ install -m 755 target/release/bird /usr/local/bin/bird
 On macOS, the native impersonation build expects these tools on `PATH`:
 
 ```bash
-brew install pkg-config make cmake ninja go
+brew install pkg-config make cmake ninja go autoconf automake libtool
 ```
 
 The repo vendors the macOS source archives needed by `libcurl-impersonate` under `third_party/curl-impersonate/distfiles/`, so the native build is network-free after clone. The remaining helpers used by the vendored transport (`patch`, `tar`, `unzip`) are available in a standard macOS install.
