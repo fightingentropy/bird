@@ -1,4 +1,4 @@
-name: macOS
+name: CI
 
 on:
   push:
@@ -105,19 +105,35 @@ jobs:
         run: cargo test
 
   package:
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Prerequisites
+      - name: Install Prerequisites (macOS)
+        if: runner.os == 'macOS'
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: brew install pkg-config make cmake ninja go
 
+      - name: Install Prerequisites (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libcurl4-openssl-dev libssl-dev
+
       - name: Capture Compiler Stamp
+        if: runner.os == 'macOS'
         id: compiler-stamp
         run: |
           stamp="$(xcodebuild -version | tr '\n' ' ')-$(clang --version | head -n 1)"
@@ -132,15 +148,25 @@ jobs:
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache Native Impersonation Build
+        if: runner.os == 'macOS'
         uses: actions/cache@v4
         with:
           path: target/curl-impersonate-cache
           key: curl-impersonate-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/curl-impersonate/distfiles/manifest.json', 'third_party/curl-impersonate/patches/**', 'crates/bird-curl-impersonate-sys/**') }}-${{ steps.compiler-stamp.outputs.value }}
 
       - name: Build Release Package
-        run: ./scripts/package-release.sh
+        run: TARGET_TRIPLE=${{ matrix.target }} ./scripts/package-release.sh
 
       - name: Verify Release Artifacts
         run: |
-          test -n "$(find dist -maxdepth 1 -name 'bird-v*.tar.gz' -print -quit)"
-          test -n "$(find dist -maxdepth 1 -name 'bird-v*.tar.gz.sha256' -print -quit)"
+          ls dist/bird-v*-${{ matrix.target }}.tar.gz
+          ls dist/bird-v*-${{ matrix.target }}.tar.gz.sha256
+
+      - name: Upload Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bird-package-${{ matrix.target }}
+          path: |
+            dist/bird-v*-${{ matrix.target }}.tar.gz
+            dist/bird-v*-${{ matrix.target }}.tar.gz.sha256
+          if-no-files-found: error
