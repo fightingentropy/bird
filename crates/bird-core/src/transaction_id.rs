@@ -1,4 +1,6 @@
-use std::sync::Mutex;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
@@ -6,10 +8,25 @@ use base64::Engine;
 use rand::Rng;
 use regex::Regex;
 use scraper::{ElementRef, Html, Selector};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::{Url, form_urlencoded::Serializer};
 
 use crate::transport::{HttpRequest, HttpTransport};
+
+static CHROME_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Chrome/(\d+)").expect("valid regex"));
+static ONDEMAND_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"['"]ondemand\.s['"]\s*:\s*['"]([\w]*)['"]"#).expect("valid regex")
+});
+static INDICES_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\(\w\[(\d{1,2})\],\s*16\)"#).expect("valid regex"));
+static MIGRATION_REDIRECT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(http(?:s)?://(?:www\.)?(twitter|x){1}\.com(/x)?/migrate([/?])?tok=[a-zA-Z0-9%\-_]+)+"#,
+    )
+    .expect("valid regex")
+});
 
 const DEFAULT_TTL: Duration = Duration::from_secs(30 * 60);
 const X_TRANSACTION_URL: &str = "https://x.com";
@@ -18,10 +35,35 @@ const ADDITIONAL_RANDOM_NUMBER: u8 = 3;
 const TOTAL_TIME: f64 = 4096.0;
 const TRANSACTION_EPOCH_SECONDS: u64 = 1_682_924_400;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct TransactionState {
     key_bytes: Vec<u8>,
     animation_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedSnapshot {
+    fetched_at_ms: u64,
+    ttl_ms: u64,
+    state: TransactionState,
+}
+
+fn default_cache_path() -> PathBuf {
+    std::env::var("BIRD_TRANSACTION_ID_CACHE")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".config/bird/transaction-id-cache.json")
+        })
+}
+
+fn current_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 impl TransactionState {
@@ -66,6 +108,7 @@ struct CachedTransactionState {
 #[derive(Debug)]
 pub struct RuntimeTransactionIdStore {
     ttl: Duration,
+    cache_path: PathBuf,
     cached: Mutex<Option<CachedTransactionState>>,
 }
 
@@ -79,6 +122,7 @@ impl RuntimeTransactionIdStore {
     pub fn new(ttl: Option<Duration>) -> Self {
         Self {
             ttl: ttl.unwrap_or(DEFAULT_TTL),
+            cache_path: default_cache_path(),
             cached: Mutex::new(None),
         }
     }
@@ -110,14 +154,47 @@ impl RuntimeTransactionIdStore {
             }
         }
 
+        if let Some(state) = self.read_disk_snapshot() {
+            self.store_in_memory(&state);
+            return Ok(state);
+        }
+
         let state = fetch_transaction_state(transport, user_agent)?;
+        self.store_in_memory(&state);
+        let _ = self.write_disk_snapshot(&state);
+        Ok(state)
+    }
+
+    fn store_in_memory(&self, state: &TransactionState) {
         if let Ok(mut guard) = self.cached.lock() {
             *guard = Some(CachedTransactionState {
                 created_at: Instant::now(),
                 state: state.clone(),
             });
         }
-        Ok(state)
+    }
+
+    fn read_disk_snapshot(&self) -> Option<TransactionState> {
+        let raw = fs::read_to_string(&self.cache_path).ok()?;
+        let snapshot: PersistedSnapshot = serde_json::from_str(&raw).ok()?;
+        let age_ms = current_unix_ms().saturating_sub(snapshot.fetched_at_ms);
+        if age_ms > snapshot.ttl_ms {
+            return None;
+        }
+        Some(snapshot.state)
+    }
+
+    fn write_disk_snapshot(&self, state: &TransactionState) -> anyhow::Result<()> {
+        let snapshot = PersistedSnapshot {
+            fetched_at_ms: current_unix_ms(),
+            ttl_ms: self.ttl.as_millis() as u64,
+            state: state.clone(),
+        };
+        if let Some(parent) = self.cache_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&self.cache_path, serde_json::to_string(&snapshot)?)?;
+        Ok(())
     }
 }
 
@@ -232,16 +309,14 @@ fn transaction_document_headers(user_agent: &str) -> Vec<(String, String)> {
 }
 
 fn chrome_version_from_user_agent(user_agent: &str) -> String {
-    Regex::new(r"Chrome/(\d+)")
-        .ok()
-        .and_then(|regex| regex.captures(user_agent))
+    CHROME_VERSION_RE
+        .captures(user_agent)
         .and_then(|captures| captures.get(1).map(|value| value.as_str().to_owned()))
         .unwrap_or_else(|| "136".to_owned())
 }
 
 fn extract_ondemand_token(html: &str) -> anyhow::Result<String> {
-    let regex = Regex::new(r#"['"]ondemand\.s['"]\s*:\s*['"]([\w]*)['"]"#)?;
-    regex
+    ONDEMAND_TOKEN_RE
         .captures(html)
         .and_then(|captures| captures.get(1))
         .map(|value| value.as_str().to_owned())
@@ -250,8 +325,7 @@ fn extract_ondemand_token(html: &str) -> anyhow::Result<String> {
 }
 
 fn extract_indices(ondemand_js: &str) -> anyhow::Result<(usize, Vec<usize>)> {
-    let regex = Regex::new(r#"\(\w\[(\d{1,2})\],\s*16\)"#)?;
-    let indices = regex
+    let indices = INDICES_RE
         .captures_iter(ondemand_js)
         .filter_map(|captures| captures.get(1))
         .filter_map(|value| value.as_str().parse::<usize>().ok())
@@ -546,10 +620,6 @@ struct MigrationForm {
 }
 
 fn extract_migration_redirect_url(html: &str) -> Option<String> {
-    let regex = Regex::new(
-        r#"(http(?:s)?://(?:www\.)?(twitter|x){1}\.com(/x)?/migrate([/?])?tok=[a-zA-Z0-9%\-_]+)+"#,
-    )
-    .ok()?;
     let document = Html::parse_document(html);
     let selector = Selector::parse(r#"meta[http-equiv="refresh"]"#).ok()?;
     let meta_content = document
@@ -557,9 +627,9 @@ fn extract_migration_redirect_url(html: &str) -> Option<String> {
         .next()
         .and_then(|element| element.value().attr("content"))
         .unwrap_or_default();
-    regex
+    MIGRATION_REDIRECT_RE
         .captures(meta_content)
-        .or_else(|| regex.captures(html))
+        .or_else(|| MIGRATION_REDIRECT_RE.captures(html))
         .and_then(|captures| captures.get(0).map(|value| value.as_str().to_owned()))
 }
 
