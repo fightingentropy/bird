@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -39,6 +39,17 @@ const BEARER_TOKEN: &str = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xn
 const SETTINGS_SCREEN_NAME_REGEX: &str = r#""screen_name":"([^"]+)""#;
 const SETTINGS_USER_ID_REGEX: &str = r#""user_id"\s*:\s*"(\d+)""#;
 const SETTINGS_NAME_REGEX: &str = r#""name":"([^"\\]*(?:\\.[^"\\]*)*)""#;
+
+static SETTINGS_SCREEN_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(SETTINGS_SCREEN_NAME_REGEX).expect("valid regex"));
+static SETTINGS_USER_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(SETTINGS_USER_ID_REGEX).expect("valid regex"));
+static SETTINGS_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(SETTINGS_NAME_REGEX).expect("valid regex"));
+static CHROME_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Chrome/(\d+)").expect("valid regex"));
+static POST_COUNT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)([\d.]+)([KMB]?)\s*posts?").expect("valid regex"));
 const EXPLORE_TAB_FOR_YOU: &str = "forYou";
 const EXPLORE_TAB_TRENDING: &str = "trending";
 const EXPLORE_TAB_NEWS: &str = "news";
@@ -242,9 +253,9 @@ impl TwitterClient {
             }
         }
 
-        let screen_name_re = Regex::new(SETTINGS_SCREEN_NAME_REGEX)?;
-        let user_id_re = Regex::new(SETTINGS_USER_ID_REGEX)?;
-        let name_re = Regex::new(SETTINGS_NAME_REGEX)?;
+        let screen_name_re = &*SETTINGS_SCREEN_NAME_RE;
+        let user_id_re = &*SETTINGS_USER_ID_RE;
+        let name_re = &*SETTINGS_NAME_RE;
         for url in ["https://x.com/settings/account", "https://twitter.com/settings/account"] {
             match self.send_request(
                 "GET",
@@ -2692,9 +2703,8 @@ impl TwitterClient {
 }
 
 fn chrome_version_from_user_agent(user_agent: &str) -> String {
-    Regex::new(r"Chrome/(\d+)")
-        .ok()
-        .and_then(|regex| regex.captures(user_agent))
+    CHROME_VERSION_RE
+        .captures(user_agent)
         .and_then(|captures| captures.get(1).map(|value| value.as_str().to_owned()))
         .unwrap_or_else(|| "131".to_owned())
 }
@@ -3059,8 +3069,7 @@ fn parse_news_item_from_content(
 }
 
 fn parse_post_count(value: &str) -> Option<u64> {
-    let regex = Regex::new(r"(?i)([\d.]+)([KMB]?)\s*posts?").ok()?;
-    let captures = regex.captures(value)?;
+    let captures = POST_COUNT_RE.captures(value)?;
     let number = captures.get(1)?.as_str().parse::<f64>().ok()?;
     let multiplier = match captures
         .get(2)

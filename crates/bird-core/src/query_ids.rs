@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{LazyLock, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
@@ -9,6 +10,19 @@ use serde::{Deserialize, Serialize};
 use crate::features::{features_path, features_snapshot};
 use crate::transport::{HttpRequest, HttpTransport};
 use crate::types::QueryIdSnapshot;
+
+static BUNDLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"https://abs\.twimg\.com/responsive-web/client-web(?:-legacy)?/[A-Za-z0-9.\-]+\.js")
+        .expect("valid regex")
+});
+static QUERY_ID_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r#"e\.exports=\{queryId\s*:\s*["']([^"']+)["']\s*,\s*operationName\s*:\s*["']([^"']+)["']"#).expect("valid regex"),
+        Regex::new(r#"e\.exports=\{operationName\s*:\s*["']([^"']+)["']\s*,\s*queryId\s*:\s*["']([^"']+)["']"#).expect("valid regex"),
+        Regex::new(r#"operationName\s*[:=]\s*["']([^"']+)["'](.{0,4000}?)queryId\s*[:=]\s*["']([^"']+)["']"#).expect("valid regex"),
+        Regex::new(r#"queryId\s*[:=]\s*["']([^"']+)["'](.{0,4000}?)operationName\s*[:=]\s*["']([^"']+)["']"#).expect("valid regex"),
+    ]
+});
 
 const DISCOVERY_PAGES: &[&str] = &[
     "https://x.com/?lang=en",
@@ -79,6 +93,7 @@ pub fn fallback_query_ids() -> BTreeMap<String, String> {
 pub struct RuntimeQueryIdStore {
     cache_path: PathBuf,
     ttl: Duration,
+    cached: OnceLock<Option<Snapshot>>,
 }
 
 impl Default for RuntimeQueryIdStore {
@@ -86,6 +101,7 @@ impl Default for RuntimeQueryIdStore {
         Self {
             cache_path: default_cache_path(),
             ttl: DEFAULT_TTL,
+            cached: OnceLock::new(),
         }
     }
 }
@@ -95,11 +111,13 @@ impl RuntimeQueryIdStore {
         Self {
             cache_path: cache_path.unwrap_or_else(default_cache_path),
             ttl: ttl.unwrap_or(DEFAULT_TTL),
+            cached: OnceLock::new(),
         }
     }
 
     pub fn get_query_id(&self, operation: &str) -> Option<String> {
-        self.read_snapshot()
+        self.cached_snapshot()
+            .as_ref()
             .and_then(|snapshot| snapshot.ids.get(operation).cloned())
             .or_else(|| fallback_query_ids().get(operation).cloned())
     }
@@ -160,6 +178,10 @@ impl RuntimeQueryIdStore {
         Ok(self.snapshot())
     }
 
+    fn cached_snapshot(&self) -> &Option<Snapshot> {
+        self.cached.get_or_init(|| self.read_snapshot())
+    }
+
     fn read_snapshot(&self) -> Option<Snapshot> {
         let raw = fs::read_to_string(&self.cache_path).ok()?;
         serde_json::from_str(&raw).ok()
@@ -171,9 +193,6 @@ pub fn target_query_id_operations() -> Vec<String> {
 }
 
 fn discover_bundles(transport: &dyn HttpTransport) -> anyhow::Result<Vec<String>> {
-    let bundle_regex = Regex::new(
-        r"https://abs\.twimg\.com/responsive-web/client-web(?:-legacy)?/[A-Za-z0-9.\-]+\.js",
-    )?;
     let mut bundles = BTreeSet::new();
     for page in DISCOVERY_PAGES {
         let response = transport.send(&HttpRequest {
@@ -193,7 +212,7 @@ fn discover_bundles(transport: &dyn HttpTransport) -> anyhow::Result<Vec<String>
         if !response.is_success() {
             continue;
         }
-        for capture in bundle_regex.find_iter(&response.text()) {
+        for capture in BUNDLE_RE.find_iter(&response.text()) {
             bundles.insert(capture.as_str().to_owned());
         }
     }
@@ -210,7 +229,6 @@ fn fetch_and_extract(
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let targets = operations.iter().cloned().collect::<BTreeSet<_>>();
     let mut discovered = BTreeMap::new();
-    let patterns = query_id_patterns()?;
     for bundle_url in bundle_urls {
         if discovered.len() == targets.len() {
             break;
@@ -226,22 +244,13 @@ fn fetch_and_extract(
             continue;
         }
         let js = response.text();
-        for (operation_name, query_id) in extract_operations(&js, &patterns) {
+        for (operation_name, query_id) in extract_operations(&js, &QUERY_ID_PATTERNS) {
             if targets.contains(&operation_name) && !discovered.contains_key(&operation_name) {
                 discovered.insert(operation_name, query_id);
             }
         }
     }
     Ok(discovered)
-}
-
-fn query_id_patterns() -> anyhow::Result<Vec<Regex>> {
-    Ok(vec![
-        Regex::new(r#"e\.exports=\{queryId\s*:\s*["']([^"']+)["']\s*,\s*operationName\s*:\s*["']([^"']+)["']"#)?,
-        Regex::new(r#"e\.exports=\{operationName\s*:\s*["']([^"']+)["']\s*,\s*queryId\s*:\s*["']([^"']+)["']"#)?,
-        Regex::new(r#"operationName\s*[:=]\s*["']([^"']+)["'](.{0,4000}?)queryId\s*[:=]\s*["']([^"']+)["']"#)?,
-        Regex::new(r#"queryId\s*[:=]\s*["']([^"']+)["'](.{0,4000}?)operationName\s*[:=]\s*["']([^"']+)["']"#)?,
-    ])
 }
 
 fn extract_operations(js: &str, patterns: &[Regex]) -> Vec<(String, String)> {

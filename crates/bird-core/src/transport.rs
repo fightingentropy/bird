@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::env;
 #[cfg(target_os = "macos")]
 use std::ffi::CString;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -108,10 +109,11 @@ pub struct TransportInfo {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CurlTransport {
     proxy: Option<String>,
     impersonation: ImpersonationConfig,
+    easy: Mutex<Easy>,
 }
 
 impl CurlTransport {
@@ -119,6 +121,7 @@ impl CurlTransport {
         Self {
             proxy,
             impersonation: ImpersonationConfig::detect(),
+            easy: Mutex::new(Easy::new()),
         }
     }
 
@@ -127,7 +130,14 @@ impl CurlTransport {
     }
 
     fn easy_send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
-        let mut easy = Easy::new();
+        let mut easy = self
+            .easy
+            .lock()
+            .map_err(|_| anyhow::anyhow!("curl handle mutex poisoned"))?;
+        // Reset options for a fresh request; libcurl preserves the connection
+        // pool, DNS cache, and TLS session cache across resets.
+        easy.reset();
+
         easy.url(&request.url)?;
         if let Some(timeout) = request.timeout {
             easy.timeout(timeout)?;
