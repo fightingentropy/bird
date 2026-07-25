@@ -381,6 +381,10 @@ impl TwitterClient {
         let mut seen = std::collections::BTreeSet::new();
         let mut tweets = Vec::new();
         let mut cursor = cursor;
+        let mut seen_cursors = std::collections::BTreeSet::new();
+        if let Some(cursor) = cursor.as_ref() {
+            seen_cursors.insert(cursor.clone());
+        }
         let mut next_cursor = None;
         let mut pages_fetched = 0usize;
 
@@ -390,49 +394,74 @@ impl TwitterClient {
             } else {
                 page_size.min(count.saturating_sub(tweets.len()))
             };
-            let variables = json!({
-                "count": page_count,
-                "includePromotedContent": false,
-                "withDownvotePerspective": false,
-                "withReactionsMetadata": false,
-                "withReactionsPerspective": false,
-                "cursor": cursor
-            });
+            let variables = bookmarks_variables(page_count, cursor.as_deref());
             let params = encode_params(&[
                 ("variables", serde_json::to_string(&variables)?),
                 ("features", serde_json::to_string(&features)?),
             ]);
-            let page = self.fetch_tweet_timeline_page_with_retry(
+            let initial_page = self.fetch_tweet_timeline_page_with_retry(
                 &self.bookmarks_query_ids(),
                 "Bookmarks",
                 &params,
                 &["data", "bookmark_timeline_v2", "timeline", "instructions"],
                 include_raw,
-                true,
-            )?;
-            let page_was_empty = page.tweets.is_empty();
+                false,
+            );
+            let should_refresh = initial_page.is_err()
+                || initial_page
+                    .as_ref()
+                    .map(|page| {
+                        bookmark_page_needs_empty_verification(
+                            pages_fetched,
+                            cursor.as_deref(),
+                            page,
+                        )
+                    })
+                    .unwrap_or(false);
+            let page = if should_refresh {
+                let snapshot = self.query_ids.refresh_required(
+                    &self.transport,
+                    &target_query_id_operations(),
+                    "Bookmarks",
+                )?;
+                let refreshed_query_id =
+                    snapshot.ids.get("Bookmarks").cloned().context(
+                        "Could not discover the current Bookmarks query; refusing to report an unverified empty timeline"
+                    )?;
+                self.fetch_tweet_timeline_page_with_retry(
+                    &[refreshed_query_id],
+                    "Bookmarks",
+                    &params,
+                    &["data", "bookmark_timeline_v2", "timeline", "instructions"],
+                    include_raw,
+                    false,
+                )?
+            } else {
+                initial_page?
+            };
             pages_fetched += 1;
-            let mut added = 0usize;
             for tweet in page.tweets {
                 if seen.insert(tweet.id.clone()) {
                     tweets.push(tweet);
-                    added += 1;
                     if !unlimited && tweets.len() >= count {
                         break;
                     }
                 }
             }
-            if page.cursor.is_none()
-                || page.cursor == cursor
-                || page_was_empty
-                || added == 0
-                || max_pages.map(|max| pages_fetched >= max).unwrap_or(false)
-            {
-                next_cursor = if max_pages.map(|max| pages_fetched >= max).unwrap_or(false) {
-                    page.cursor
-                } else {
-                    None
-                };
+            let repeated_cursor = page
+                .cursor
+                .as_ref()
+                .map(|cursor| !seen_cursors.insert(cursor.clone()))
+                .unwrap_or(false);
+            let max_pages_reached = max_pages
+                .map(|max| pages_fetched >= max)
+                .unwrap_or(false);
+            if let Some(stop_cursor) = bookmark_stop_cursor(
+                page.cursor.as_deref(),
+                repeated_cursor,
+                max_pages_reached,
+            ) {
+                next_cursor = stop_cursor;
                 break;
             }
             cursor = page.cursor.clone();
@@ -1288,6 +1317,7 @@ impl TwitterClient {
         self.with_refreshed_query_ids_on_error(|| {
             let mut last_error = None;
             let mut needs_refresh = false;
+            let mut empty_page = None;
 
             for query_id in query_ids {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}?{params}");
@@ -1297,7 +1327,7 @@ impl TwitterClient {
                     continue;
                 };
                 if response.status == 404 {
-                    needs_refresh = true;
+                    needs_refresh |= refresh_on_query_error;
                     last_error = Some("HTTP 404".to_owned());
                     continue;
                 }
@@ -1327,11 +1357,27 @@ impl TwitterClient {
                         continue;
                     }
                 }
+                if instructions.is_none() {
+                    needs_refresh |= refresh_on_query_error;
+                    last_error = Some(format!(
+                        "{operation_name} response did not contain timeline instructions"
+                    ));
+                    continue;
+                }
 
-                return Ok(TweetTimelinePage {
+                let page = TweetTimelinePage {
                     tweets: parse_tweets_from_instructions(instructions, self.quote_depth, include_raw),
                     cursor: extract_cursor_from_instructions(instructions, "Bottom"),
-                });
+                };
+                if page.tweets.is_empty() {
+                    empty_page.get_or_insert(page);
+                    continue;
+                }
+                return Ok(page);
+            }
+
+            if let Some(page) = empty_page {
+                return Ok(page);
             }
 
             Err(RefreshableError {
@@ -2638,6 +2684,7 @@ impl TwitterClient {
     fn bookmarks_query_ids(&self) -> Vec<String> {
         unique(vec![
             self.query_id("Bookmarks"),
+            "xtj3H29MLXk0r_3TIgdU5g".into(),
             "RV1g3b8n_SGOHwkqKYSCFw".into(),
             "tmd4ifV8RHltzn8ymGg1aw".into(),
         ])
@@ -2769,6 +2816,44 @@ fn encode_params(entries: &[(&str, String)]) -> String {
         serializer.append_pair(key, value);
     }
     serializer.finish()
+}
+
+fn bookmarks_variables(count: usize, cursor: Option<&str>) -> Value {
+    let mut variables = json!({
+        "count": count,
+        "includePromotedContent": true
+    });
+    if let (Some(cursor), Some(map)) = (cursor, variables.as_object_mut()) {
+        map.insert("cursor".to_owned(), Value::String(cursor.to_owned()));
+    }
+    variables
+}
+
+fn bookmark_page_needs_empty_verification(
+    pages_fetched: usize,
+    request_cursor: Option<&str>,
+    page: &TweetTimelinePage,
+) -> bool {
+    pages_fetched == 0
+        && page.tweets.is_empty()
+        && match page.cursor.as_deref() {
+            None => true,
+            Some(response_cursor) => Some(response_cursor) == request_cursor,
+        }
+}
+
+fn bookmark_stop_cursor(
+    page_cursor: Option<&str>,
+    repeated_cursor: bool,
+    max_pages_reached: bool,
+) -> Option<Option<String>> {
+    if page_cursor.is_none() || repeated_cursor {
+        Some(None)
+    } else if max_pages_reached {
+        Some(page_cursor.map(ToOwned::to_owned))
+    } else {
+        None
+    }
 }
 
 fn normalize_handle(value: &str) -> Option<String> {
@@ -3277,9 +3362,81 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        media_category_for_mime, multipart_form_data, status_update_input_from_create_tweet_variables,
-        timeline_page_error, MultipartField,
+        bookmark_page_needs_empty_verification, bookmark_stop_cursor, bookmarks_variables,
+        media_category_for_mime, multipart_form_data,
+        status_update_input_from_create_tweet_variables, timeline_page_error, MultipartField,
+        TweetTimelinePage,
     };
+
+    #[test]
+    fn bookmark_variables_match_the_current_web_request() {
+        assert_eq!(
+            bookmarks_variables(20, None),
+            json!({
+                "count": 20,
+                "includePromotedContent": true
+            })
+        );
+        assert_eq!(
+            bookmarks_variables(20, Some("next")),
+            json!({
+                "count": 20,
+                "includePromotedContent": true,
+                "cursor": "next"
+            })
+        );
+    }
+
+    #[test]
+    fn terminal_empty_first_bookmark_request_requires_verification() {
+        let terminal_empty_page = TweetTimelinePage {
+            tweets: Vec::new(),
+            cursor: None,
+        };
+        let repeated_empty_page = TweetTimelinePage {
+            tweets: Vec::new(),
+            cursor: Some("resume".to_owned()),
+        };
+        let advancing_empty_page = TweetTimelinePage {
+            tweets: Vec::new(),
+            cursor: Some("next".to_owned()),
+        };
+
+        assert!(bookmark_page_needs_empty_verification(
+            0,
+            Some("resume"),
+            &terminal_empty_page
+        ));
+        assert!(bookmark_page_needs_empty_verification(
+            0,
+            Some("resume"),
+            &repeated_empty_page
+        ));
+        assert!(!bookmark_page_needs_empty_verification(
+            0,
+            Some("resume"),
+            &advancing_empty_page
+        ));
+        assert!(!bookmark_page_needs_empty_verification(
+            1,
+            Some("resume"),
+            &terminal_empty_page
+        ));
+    }
+
+    #[test]
+    fn repeated_bookmark_cursor_never_becomes_a_resume_cursor() {
+        assert_eq!(
+            bookmark_stop_cursor(Some("loop"), true, true),
+            Some(None)
+        );
+        assert_eq!(
+            bookmark_stop_cursor(Some("next"), false, true),
+            Some(Some("next".to_owned()))
+        );
+        assert_eq!(bookmark_stop_cursor(None, false, false), Some(None));
+        assert_eq!(bookmark_stop_cursor(Some("next"), false, false), None);
+    }
 
     #[test]
     fn media_category_maps_expected_types() {
