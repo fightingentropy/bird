@@ -44,14 +44,50 @@ pub fn build_home_timeline_features() -> Value {
 }
 
 pub fn build_bookmarks_features() -> Value {
-    let mut value = build_timeline_features();
-    if let Some(map) = value.as_object_mut() {
-        map.insert(
-            "graphql_timeline_v2_bookmark_timeline".to_owned(),
-            Value::Bool(true),
-        );
-    }
-    apply_feature_overrides("bookmarks", value)
+    apply_bookmark_feature_overrides(
+        "bookmarks",
+        json!({
+            "rweb_video_screen_enabled": false,
+            "rweb_cashtags_enabled": true,
+            "profile_label_improvements_pcf_label_in_post_enabled": true,
+            "responsive_web_profile_redirect_enabled": true,
+            "rweb_tipjar_consumption_enabled": false,
+            "verified_phone_label_enabled": false,
+            "creator_subscriptions_tweet_preview_api_enabled": true,
+            "responsive_web_graphql_timeline_navigation_enabled": true,
+            "responsive_web_graphql_skip_user_profile_image_extensions_enabled": false,
+            "premium_content_api_read_enabled": false,
+            "communities_web_enable_tweet_community_results_fetch": true,
+            "c9s_tweet_anatomy_moderator_badge_enabled": true,
+            "responsive_web_grok_analyze_button_fetch_trends_enabled": false,
+            "responsive_web_grok_analyze_post_followups_enabled": true,
+            "rweb_cashtags_composer_attachment_enabled": true,
+            "responsive_web_jetfuel_frame": true,
+            "responsive_web_grok_share_attachment_enabled": true,
+            "responsive_web_grok_annotations_enabled": true,
+            "articles_preview_enabled": true,
+            "responsive_web_edit_tweet_api_enabled": true,
+            "rweb_conversational_replies_downvote_enabled": false,
+            "graphql_is_translatable_rweb_tweet_is_translatable_enabled": true,
+            "view_counts_everywhere_api_enabled": true,
+            "longform_notetweets_consumption_enabled": true,
+            "responsive_web_twitter_article_tweet_consumption_enabled": true,
+            "content_disclosure_indicator_enabled": true,
+            "content_disclosure_ai_generated_indicator_enabled": true,
+            "responsive_web_grok_show_grok_translated_post": true,
+            "responsive_web_grok_analysis_button_from_backend": true,
+            "post_ctas_fetch_enabled": false,
+            "freedom_of_speech_not_reach_fetch_enabled": true,
+            "standardized_nudges_misinfo": true,
+            "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": true,
+            "longform_notetweets_rich_text_read_enabled": true,
+            "longform_notetweets_inline_media_enabled": false,
+            "responsive_web_grok_image_annotation_enabled": true,
+            "responsive_web_grok_imagine_annotation_enabled": true,
+            "responsive_web_grok_community_note_auto_translation_is_enabled": true,
+            "responsive_web_enhance_cards_enabled": false
+        }),
+    )
 }
 
 pub fn build_likes_features() -> Value {
@@ -445,6 +481,25 @@ fn apply_feature_overrides(set_name: &str, base: Value) -> Value {
     Value::Object(base_map)
 }
 
+fn apply_bookmark_feature_overrides(set_name: &str, base: Value) -> Value {
+    let mut base_map = base.as_object().cloned().unwrap_or_default();
+    let allowed = base_map.keys().cloned().collect::<std::collections::BTreeSet<_>>();
+    let overrides = load_feature_overrides();
+    for (key, value) in overrides.global {
+        if allowed.contains(&key) {
+            base_map.insert(key, Value::Bool(value));
+        }
+    }
+    if let Some(set) = overrides.sets.get(set_name) {
+        for (key, value) in set {
+            if allowed.contains(key) {
+                base_map.insert(key.clone(), Value::Bool(*value));
+            }
+        }
+    }
+    Value::Object(base_map)
+}
+
 fn load_feature_overrides() -> FeatureOverrides {
     let mut merged = default_feature_overrides();
     if let Ok(raw) = fs::read_to_string(features_path()) {
@@ -474,20 +529,29 @@ fn default_feature_overrides() -> FeatureOverrides {
             ("post_ctas_fetch_enabled".to_owned(), true),
             ("responsive_web_graphql_exclude_directive_enabled".to_owned(), true),
         ]),
-        sets: BTreeMap::from([(
-            "lists".to_owned(),
-            BTreeMap::from([
-                ("blue_business_profile_image_shape_enabled".to_owned(), true),
-                ("tweetypie_unmention_optimization_enabled".to_owned(), true),
-                ("responsive_web_text_conversations_enabled".to_owned(), false),
-                ("interactive_text_enabled".to_owned(), true),
-                ("vibe_api_enabled".to_owned(), true),
-                (
-                    "responsive_web_twitter_blue_verified_badge_is_enabled".to_owned(),
-                    true,
-                ),
-            ]),
-        )]),
+        sets: BTreeMap::from([
+            (
+                "bookmarks".to_owned(),
+                BTreeMap::from([
+                    ("post_ctas_fetch_enabled".to_owned(), false),
+                    ("responsive_web_grok_annotations_enabled".to_owned(), true),
+                ]),
+            ),
+            (
+                "lists".to_owned(),
+                BTreeMap::from([
+                    ("blue_business_profile_image_shape_enabled".to_owned(), true),
+                    ("tweetypie_unmention_optimization_enabled".to_owned(), true),
+                    ("responsive_web_text_conversations_enabled".to_owned(), false),
+                    ("interactive_text_enabled".to_owned(), true),
+                    ("vibe_api_enabled".to_owned(), true),
+                    (
+                        "responsive_web_twitter_blue_verified_badge_is_enabled".to_owned(),
+                        true,
+                    ),
+                ]),
+            ),
+        ]),
     }
 }
 
@@ -496,4 +560,31 @@ fn to_json_value(overrides: &FeatureOverrides) -> Value {
     root.insert("global".to_owned(), serde_json::to_value(&overrides.global).unwrap_or(Value::Object(Map::new())));
     root.insert("sets".to_owned(), serde_json::to_value(&overrides.sets).unwrap_or(Value::Object(Map::new())));
     Value::Object(root)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::build_bookmarks_features;
+
+    #[test]
+    fn bookmark_features_match_the_current_operation_shape() {
+        let features = build_bookmarks_features();
+        let features = features.as_object().expect("bookmark features");
+
+        assert_eq!(features.len(), 39);
+        assert_eq!(
+            features.get("post_ctas_fetch_enabled").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            features
+                .get("responsive_web_grok_annotations_enabled")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(!features.contains_key("graphql_timeline_v2_bookmark_timeline"));
+        assert!(!features.contains_key("responsive_web_graphql_exclude_directive_enabled"));
+    }
 }
