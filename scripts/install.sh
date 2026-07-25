@@ -87,6 +87,20 @@ install_binary() {
   log "installed ${target}"
 }
 
+verify_bird_version() {
+  local binary_path label version_output installed_version
+  binary_path="$1"
+  label="$2"
+  [[ -x "$binary_path" ]] || fail "${label} is missing or not executable: ${binary_path}"
+  if ! version_output="$("$binary_path" --version 2>&1)"; then
+    fail "could not run ${label}: ${binary_path}"
+  fi
+  installed_version="$(awk 'NR==1 { print $2 }' <<< "$version_output")"
+  [[ "$installed_version" == "$RELEASE_VERSION" ]] \
+    || fail "${label} reports bird version ${installed_version:-unknown}; expected ${RELEASE_VERSION}"
+  log "verified ${label} ${installed_version}"
+}
+
 print_path_hint() {
   case ":$PATH:" in
     *":${INSTALL_DIR}:"*)
@@ -147,12 +161,23 @@ PACKAGE_DIR="${TMP_DIR}/${PACKAGE_NAME}"
 [[ -d "$PACKAGE_DIR" ]] || fail "release archive did not unpack ${PACKAGE_NAME}"
 
 IFS=',' read -r -a BIN_LIST <<< "$BINARIES"
+INSTALLED_BIRD=0
 for binary in "${BIN_LIST[@]}"; do
   binary="${binary#"${binary%%[![:space:]]*}"}"
   binary="${binary%"${binary##*[![:space:]]}"}"
   [[ -n "$binary" ]] || continue
+  if [[ "$binary" == "bird" ]]; then
+    verify_bird_version "${PACKAGE_DIR}/bin/bird" "release package"
+  fi
   install_binary "$PACKAGE_DIR" "$binary"
+  if [[ "$binary" == "bird" ]]; then
+    INSTALLED_BIRD=1
+  fi
 done
+
+if [[ "$INSTALLED_BIRD" == "1" ]]; then
+  verify_bird_version "${INSTALL_DIR}/bird" "installed bird"
+fi
 
 print_path_hint
 log

@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 const DISTFILE_MANIFEST_NAME: &str = "manifest.json";
 const CACHE_ROOT_NAME: &str = "curl-impersonate-cache";
 const SUCCESS_MARKER: &str = "build.ok";
+const DEFAULT_MACOS_DEPLOYMENT_TARGET: &str = "11.0";
 
 #[derive(Debug, Deserialize)]
 struct DistfileManifest {
@@ -104,10 +105,13 @@ fn main() {
         .try_get_compiler()
         .expect("failed to detect a C compiler for native macOS impersonation");
     let target = env::var("TARGET").unwrap();
+    let deployment_target = env::var("MACOSX_DEPLOYMENT_TARGET")
+        .unwrap_or_else(|_| DEFAULT_MACOS_DEPLOYMENT_TARGET.to_owned());
     let cache_dir = target_root(&workspace_root)
         .join(CACHE_ROOT_NAME)
         .join(build_fingerprint(
             &target,
+            &deployment_target,
             &manifest_path,
             &source_root.join("patches"),
             &manifest_dir.join("build.rs"),
@@ -130,6 +134,7 @@ fn main() {
             &work_dir,
             &install_root,
             &success_marker,
+            &deployment_target,
         );
     }
 
@@ -185,6 +190,7 @@ fn load_manifest(path: &Path) -> DistfileManifest {
 
 fn build_fingerprint(
     target: &str,
+    deployment_target: &str,
     manifest_path: &Path,
     patches_dir: &Path,
     build_rs_path: &Path,
@@ -192,6 +198,7 @@ fn build_fingerprint(
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(target.as_bytes());
+    hasher.update(deployment_target.as_bytes());
     hasher.update(read_bytes(manifest_path));
     hash_dir_contents(&mut hasher, patches_dir);
     hasher.update(read_bytes(build_rs_path));
@@ -247,6 +254,7 @@ fn rebuild_cache(
     work_dir: &Path,
     install_root: &Path,
     success_marker: &Path,
+    deployment_target: &str,
 ) {
     if cache_dir.exists() {
         fs::remove_dir_all(cache_dir).unwrap_or_else(|error| {
@@ -264,15 +272,27 @@ fn rebuild_cache(
     run_command(
         Command::new(configure)
             .current_dir(work_dir)
+            .env("MACOSX_DEPLOYMENT_TARGET", deployment_target)
+            // macOS 27 exposes pipe2 in the SDK, but it is unavailable at the
+            // supported deployment target and Autoconf's link probe misses that.
+            .env("ac_cv_func_pipe2", "no")
             .arg(format!("--prefix={}", install_root.display())),
         "configure vendored curl-impersonate",
     );
     run_command(
-        Command::new(gmake).current_dir(work_dir).arg("build"),
+        Command::new(gmake)
+            .current_dir(work_dir)
+            .env("MACOSX_DEPLOYMENT_TARGET", deployment_target)
+            .env("ac_cv_func_pipe2", "no")
+            .arg("build"),
         "build vendored curl-impersonate",
     );
     run_command(
-        Command::new(gmake).current_dir(work_dir).arg("install"),
+        Command::new(gmake)
+            .current_dir(work_dir)
+            .env("MACOSX_DEPLOYMENT_TARGET", deployment_target)
+            .env("ac_cv_func_pipe2", "no")
+            .arg("install"),
         "install vendored curl-impersonate",
     );
 

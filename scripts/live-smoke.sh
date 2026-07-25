@@ -6,6 +6,7 @@ BIRD_BIN="${BIRD_BIN:-bird}"
 SEARCH_QUERY="${BIRD_SEARCH_QUERY:-from:MoonOverlord}"
 READ_ID="${BIRD_READ_ID:-2031456653053218817}"
 WRITE_SMOKE="${BIRD_WRITE_SMOKE:-0}"
+BOOKMARK_MAX_PAGES="${BIRD_BOOKMARK_MAX_PAGES:-20}"
 
 run_cmd() {
   echo
@@ -20,6 +21,9 @@ run_cmd "$BIRD_BIN" home -n 1 --json
 run_cmd "$BIRD_BIN" search "$SEARCH_QUERY" -n 1 --json
 run_cmd "$BIRD_BIN" read "$READ_ID" --json
 run_cmd "$BIRD_BIN" bookmarks -n 1 --json
+echo
+echo "+ $BIRD_BIN bookmarks --all --max-pages $BOOKMARK_MAX_PAGES --json >/dev/null"
+"$BIRD_BIN" bookmarks --all --max-pages "$BOOKMARK_MAX_PAGES" --json >/dev/null
 run_cmd "$BIRD_BIN" news -n 1 --json
 
 if [[ "$WRITE_SMOKE" != "1" ]]; then
