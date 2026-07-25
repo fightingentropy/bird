@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{LazyLock, OnceLock, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
@@ -93,7 +93,7 @@ pub fn fallback_query_ids() -> BTreeMap<String, String> {
 pub struct RuntimeQueryIdStore {
     cache_path: PathBuf,
     ttl: Duration,
-    cached: OnceLock<Option<Snapshot>>,
+    cached: OnceLock<RwLock<Option<Snapshot>>>,
 }
 
 impl Default for RuntimeQueryIdStore {
@@ -116,9 +116,13 @@ impl RuntimeQueryIdStore {
     }
 
     pub fn get_query_id(&self, operation: &str) -> Option<String> {
-        self.cached_snapshot()
+        let cached_id = self
+            .cached_snapshot()
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
             .as_ref()
-            .and_then(|snapshot| snapshot.ids.get(operation).cloned())
+            .and_then(|snapshot| snapshot.ids.get(operation).cloned());
+        cached_id
             .or_else(|| fallback_query_ids().get(operation).cloned())
     }
 
@@ -175,11 +179,16 @@ impl RuntimeQueryIdStore {
             fs::create_dir_all(parent)?;
         }
         fs::write(&self.cache_path, format!("{}\n", serde_json::to_string_pretty(&snapshot)?))?;
+        *self
+            .cached_snapshot()
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(snapshot);
         Ok(self.snapshot())
     }
 
-    fn cached_snapshot(&self) -> &Option<Snapshot> {
-        self.cached.get_or_init(|| self.read_snapshot())
+    fn cached_snapshot(&self) -> &RwLock<Option<Snapshot>> {
+        self.cached
+            .get_or_init(|| RwLock::new(self.read_snapshot()))
     }
 
     fn read_snapshot(&self) -> Option<Snapshot> {
@@ -377,9 +386,33 @@ mod time_like {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::time::Duration;
+
     use regex::Regex;
 
-    use super::extract_operations;
+    use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
+
+    use super::{extract_operations, Discovery, RuntimeQueryIdStore, Snapshot};
+
+    struct QueryIdTransport;
+
+    impl HttpTransport for QueryIdTransport {
+        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            let body = if request.url.ends_with(".js") {
+                br#"e.exports={queryId:"new-bookmarks-id",operationName:"Bookmarks"}"#.to_vec()
+            } else {
+                br#"<script src="https://abs.twimg.com/responsive-web/client-web/test.js"></script>"#
+                    .to_vec()
+            };
+            Ok(HttpResponse {
+                status: 200,
+                body,
+                ..HttpResponse::default()
+            })
+        }
+    }
 
     #[test]
     fn extracts_query_ids_from_bundle_patterns() {
@@ -402,5 +435,41 @@ mod tests {
 
         assert!(operations.contains(&("HomeTimeline".to_owned(), "abc123".to_owned())));
         assert!(operations.contains(&("TweetDetail".to_owned(), "def456".to_owned())));
+    }
+
+    #[test]
+    fn refresh_replaces_the_in_memory_snapshot() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let cache_path = temp.path().join("query-ids.json");
+        let snapshot = Snapshot {
+            fetched_at: "2026-07-25T00:00:00.000Z".to_owned(),
+            ttl_ms: 60_000,
+            ids: BTreeMap::from([("Bookmarks".to_owned(), "old-bookmarks-id".to_owned())]),
+            discovery: Discovery {
+                pages: Vec::new(),
+                bundles: Vec::new(),
+            },
+        };
+        fs::write(
+            &cache_path,
+            serde_json::to_string(&snapshot).expect("snapshot JSON"),
+        )
+        .expect("cache write");
+        let store = RuntimeQueryIdStore::new(
+            Some(cache_path),
+            Some(Duration::from_secs(60)),
+        );
+
+        assert_eq!(
+            store.get_query_id("Bookmarks").as_deref(),
+            Some("old-bookmarks-id")
+        );
+        store
+            .refresh(&QueryIdTransport, &["Bookmarks".to_owned()])
+            .expect("refresh");
+        assert_eq!(
+            store.get_query_id("Bookmarks").as_deref(),
+            Some("new-bookmarks-id")
+        );
     }
 }

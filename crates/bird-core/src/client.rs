@@ -1253,14 +1253,11 @@ impl TwitterClient {
                     .map(Vec::as_slice);
 
                 if let Some(errors) = data.get("errors").and_then(Value::as_array) {
-                    let message = format_errors(errors);
-                    let is_refreshable = refresh_on_query_error
-                        && (message.contains("Query: Unspecified")
-                            || message.contains("GRAPHQL_VALIDATION_FAILED")
-                            || message.contains("must be defined"));
-                    if instructions.is_none() || is_refreshable {
-                        last_error = Some(message);
-                        needs_refresh |= is_refreshable;
+                    if let Some(error) =
+                        timeline_page_error(errors, instructions.is_some(), refresh_on_query_error)
+                    {
+                        needs_refresh |= error.needs_refresh;
+                        last_error = Some(error.message);
                         continue;
                     }
                 }
@@ -1322,14 +1319,11 @@ impl TwitterClient {
                     .map(Vec::as_slice);
 
                 if let Some(errors) = data.get("errors").and_then(Value::as_array) {
-                    let message = format_errors(errors);
-                    let is_refreshable = refresh_on_query_error
-                        && (message.contains("Query: Unspecified")
-                            || message.contains("GRAPHQL_VALIDATION_FAILED")
-                            || message.contains("must be defined"));
-                    if instructions.is_none() || is_refreshable {
-                        last_error = Some(message);
-                        needs_refresh |= is_refreshable;
+                    if let Some(error) =
+                        timeline_page_error(errors, instructions.is_some(), refresh_on_query_error)
+                    {
+                        needs_refresh |= error.needs_refresh;
+                        last_error = Some(error.message);
                         continue;
                     }
                 }
@@ -2867,6 +2861,28 @@ fn format_errors(errors: &[Value]) -> String {
         .join(", ")
 }
 
+fn timeline_page_error(
+    errors: &[Value],
+    has_instructions: bool,
+    refresh_on_query_error: bool,
+) -> Option<RefreshableError> {
+    // X may return advisory GraphQL errors alongside a usable timeline page.
+    // Keep consuming the supplied instructions instead of discarding its cursor.
+    if has_instructions {
+        return None;
+    }
+
+    let message = format_errors(errors);
+    let needs_refresh = refresh_on_query_error
+        && (message.contains("Query: Unspecified")
+            || message.contains("GRAPHQL_VALIDATION_FAILED")
+            || message.contains("must be defined"));
+    Some(RefreshableError {
+        message,
+        needs_refresh,
+    })
+}
+
 fn parse_bookmark_mutation_response(
     response: crate::transport::HttpResponse,
 ) -> anyhow::Result<BookmarkMutationResult> {
@@ -3262,7 +3278,7 @@ mod tests {
 
     use super::{
         media_category_for_mime, multipart_form_data, status_update_input_from_create_tweet_variables,
-        MultipartField,
+        timeline_page_error, MultipartField,
     };
 
     #[test]
@@ -3314,5 +3330,33 @@ mod tests {
         assert!(text.contains("APPEND"));
         assert!(text.contains("name=\"media\"; filename=\"media\""));
         assert!(text.contains("Content-Type: image/png"));
+    }
+
+    #[test]
+    fn timeline_accepts_instructions_with_advisory_graphql_errors() {
+        let errors = json!([{ "message": "Query: Unspecified" }]);
+
+        let result = timeline_page_error(
+            errors.as_array().expect("errors"),
+            true,
+            true,
+        );
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn timeline_retries_refreshable_errors_without_instructions() {
+        let errors = json!([{ "message": "Query: Unspecified" }]);
+
+        let result = timeline_page_error(
+            errors.as_array().expect("errors"),
+            false,
+            true,
+        )
+        .expect("timeline error");
+
+        assert_eq!(result.message, "Query: Unspecified");
+        assert!(result.needs_refresh);
     }
 }
