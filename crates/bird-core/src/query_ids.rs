@@ -15,6 +15,15 @@ static BUNDLE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"https://abs\.twimg\.com/responsive-web/client-web(?:-legacy)?/[A-Za-z0-9.\-]+\.js")
         .expect("valid regex")
 });
+static CHUNK_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(\d+):"([^"]*bundle\.Bookmarks[^"]*)""#).expect("valid regex")
+});
+static CHUNK_HASH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(\d+):"([a-f0-9]{7,})""#).expect("valid regex")
+});
+static CHUNK_SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\}\)\[e\]\+"([^"]*\.js)""#).expect("valid regex")
+});
 static QUERY_ID_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
         Regex::new(r#"e\.exports=\{queryId\s*:\s*["']([^"']+)["']\s*,\s*operationName\s*:\s*["']([^"']+)["']"#).expect("valid regex"),
@@ -26,6 +35,7 @@ static QUERY_ID_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 
 const DISCOVERY_PAGES: &[&str] = &[
     "https://x.com/?lang=en",
+    "https://x.com/i/bookmarks",
     "https://x.com/explore",
     "https://x.com/notifications",
     "https://x.com/settings/profile",
@@ -72,7 +82,7 @@ pub fn fallback_query_ids() -> BTreeMap<String, String> {
         ("SearchTimeline".into(), "M1jEez78PEfVfbQLvlWMvQ".into()),
         ("UserArticlesTweets".into(), "8zBy9h4L90aDL02RsBcCFg".into()),
         ("UserTweets".into(), "Wms1GvIiHXAPBaCr9KblaA".into()),
-        ("Bookmarks".into(), "RV1g3b8n_SGOHwkqKYSCFw".into()),
+        ("Bookmarks".into(), "xtj3H29MLXk0r_3TIgdU5g".into()),
         ("Following".into(), "BEkNpEt5pNETESoqMsTEGA".into()),
         ("Followers".into(), "kuFUYP9eV1FPoEy4N-pi7w".into()),
         ("Likes".into(), "JR2gceKucIKcVNB_9JkhsA".into()),
@@ -158,15 +168,45 @@ impl RuntimeQueryIdStore {
     }
 
     pub fn refresh(&self, transport: &dyn HttpTransport, operations: &[String]) -> anyhow::Result<QueryIdSnapshot> {
+        self.refresh_inner(transport, operations, None)
+    }
+
+    pub fn refresh_required(
+        &self,
+        transport: &dyn HttpTransport,
+        operations: &[String],
+        required_operation: &str,
+    ) -> anyhow::Result<QueryIdSnapshot> {
+        self.refresh_inner(transport, operations, Some(required_operation))
+    }
+
+    fn refresh_inner(
+        &self,
+        transport: &dyn HttpTransport,
+        operations: &[String],
+        required_operation: Option<&str>,
+    ) -> anyhow::Result<QueryIdSnapshot> {
         let bundle_urls = discover_bundles(transport)?;
         let discovered = fetch_and_extract(transport, &bundle_urls, operations)?;
         if discovered.is_empty() {
-            return Ok(self.snapshot());
+            anyhow::bail!("No GraphQL query IDs discovered; refusing to reuse a stale cache.");
         }
+        if let Some(required_operation) = required_operation {
+            if !discovered.contains_key(required_operation) {
+                anyhow::bail!(
+                    "Could not discover the current {required_operation} query; refusing to reuse a stale cache."
+                );
+            }
+        }
+        let mut ids = self
+            .read_snapshot()
+            .map(|snapshot| snapshot.ids)
+            .unwrap_or_default();
+        ids.extend(discovered);
         let snapshot = Snapshot {
             fetched_at: chrono_like_now(),
             ttl_ms: self.ttl.as_millis() as u64,
-            ids: discovered,
+            ids,
             discovery: Discovery {
                 pages: DISCOVERY_PAGES.iter().map(|page| (*page).to_owned()).collect(),
                 bundles: bundle_urls
@@ -221,14 +261,53 @@ fn discover_bundles(transport: &dyn HttpTransport) -> anyhow::Result<Vec<String>
         if !response.is_success() {
             continue;
         }
-        for capture in BUNDLE_RE.find_iter(&response.text()) {
+        let body = response.text();
+        for capture in BUNDLE_RE.find_iter(&body) {
             bundles.insert(capture.as_str().to_owned());
         }
+        bundles.extend(discover_lazy_bookmark_bundles(&body));
     }
     if bundles.is_empty() {
         anyhow::bail!("No client bundles discovered; x.com layout may have changed.");
     }
     Ok(bundles.into_iter().collect())
+}
+
+fn discover_lazy_bookmark_bundles(html: &str) -> Vec<String> {
+    let Some(base_url) = BUNDLE_RE
+        .find(html)
+        .and_then(|url| url.as_str().rsplit_once('/').map(|(base, _)| base))
+    else {
+        return Vec::new();
+    };
+    let Some(suffix) = CHUNK_SUFFIX_RE
+        .captures(html)
+        .and_then(|capture| capture.get(1))
+        .map(|value| value.as_str())
+    else {
+        return Vec::new();
+    };
+    let hashes = CHUNK_HASH_RE
+        .captures_iter(html)
+        .filter_map(|capture| {
+            Some((
+                capture.get(1)?.as_str(),
+                capture.get(2)?.as_str(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    CHUNK_NAME_RE
+        .captures_iter(html)
+        .filter_map(|capture| {
+            let chunk_id = capture.get(1)?.as_str();
+            let name = capture.get(2)?.as_str();
+            let hash = hashes.get(chunk_id)?;
+            Some(format!("{base_url}/{name}.{hash}{suffix}"))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn fetch_and_extract(
@@ -394,16 +473,47 @@ mod tests {
 
     use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
 
-    use super::{extract_operations, Discovery, RuntimeQueryIdStore, Snapshot};
+    use super::{
+        discover_lazy_bookmark_bundles, extract_operations, Discovery, RuntimeQueryIdStore,
+        Snapshot,
+    };
 
     struct QueryIdTransport;
+    struct EmptyQueryIdTransport;
+    struct UnrelatedQueryIdTransport;
 
     impl HttpTransport for QueryIdTransport {
         fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
-            let body = if request.url.ends_with(".js") {
+            let body = if request.url.ends_with(
+                "shared~bundle.BookmarkFolders~bundle.Bookmarks.e9764eba.js",
+            ) {
                 br#"e.exports={queryId:"new-bookmarks-id",operationName:"Bookmarks"}"#.to_vec()
+            } else if request.url.ends_with(".js") {
+                Vec::new()
             } else {
-                br#"<script src="https://abs.twimg.com/responsive-web/client-web/test.js"></script>"#
+                br#"
+                    <script src="https://abs.twimg.com/responsive-web/client-web/main.abcdef01.js"></script>
+                    <script>
+                    e.u=e=>({34778:"shared~bundle.BookmarkFolders~bundle.Bookmarks"})[e]
+                        +"."+({34778:"e9764eb"})[e]+"a.js"
+                    </script>
+                "#
+                .to_vec()
+            };
+            Ok(HttpResponse {
+                status: 200,
+                body,
+                ..HttpResponse::default()
+            })
+        }
+    }
+
+    impl HttpTransport for EmptyQueryIdTransport {
+        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            let body = if request.url.ends_with(".js") {
+                Vec::new()
+            } else {
+                br#"<script src="https://abs.twimg.com/responsive-web/client-web/main.abcdef01.js"></script>"#
                     .to_vec()
             };
             Ok(HttpResponse {
@@ -412,6 +522,41 @@ mod tests {
                 ..HttpResponse::default()
             })
         }
+    }
+
+    impl HttpTransport for UnrelatedQueryIdTransport {
+        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            let body = if request.url.ends_with(".js") {
+                br#"e.exports={queryId:"create-tweet-id",operationName:"CreateTweet"}"#.to_vec()
+            } else {
+                br#"<script src="https://abs.twimg.com/responsive-web/client-web/main.abcdef01.js"></script>"#
+                    .to_vec()
+            };
+            Ok(HttpResponse {
+                status: 200,
+                body,
+                ..HttpResponse::default()
+            })
+        }
+    }
+
+    #[test]
+    fn discovers_lazy_bookmark_bundle_from_chunk_manifest() {
+        let html = r#"
+            <script src="https://abs.twimg.com/responsive-web/client-web/main.abcdef01.js"></script>
+            <script>
+            e.u=e=>({34778:"shared~bundle.BookmarkFolders~bundle.Bookmarks"})[e]
+                +"."+({34778:"e9764eb"})[e]+"a.js"
+            </script>
+        "#;
+
+        assert_eq!(
+            discover_lazy_bookmark_bundles(html),
+            vec![
+                "https://abs.twimg.com/responsive-web/client-web/shared~bundle.BookmarkFolders~bundle.Bookmarks.e9764eba.js"
+                    .to_owned()
+            ]
+        );
     }
 
     #[test]
@@ -444,7 +589,10 @@ mod tests {
         let snapshot = Snapshot {
             fetched_at: "2026-07-25T00:00:00.000Z".to_owned(),
             ttl_ms: 60_000,
-            ids: BTreeMap::from([("Bookmarks".to_owned(), "old-bookmarks-id".to_owned())]),
+            ids: BTreeMap::from([
+                ("Bookmarks".to_owned(), "old-bookmarks-id".to_owned()),
+                ("HomeTimeline".to_owned(), "keep-home-id".to_owned()),
+            ]),
             discovery: Discovery {
                 pages: Vec::new(),
                 bundles: Vec::new(),
@@ -471,5 +619,43 @@ mod tests {
             store.get_query_id("Bookmarks").as_deref(),
             Some("new-bookmarks-id")
         );
+        assert_eq!(
+            store.get_query_id("HomeTimeline").as_deref(),
+            Some("keep-home-id")
+        );
+    }
+
+    #[test]
+    fn refresh_rejects_an_empty_discovery() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = RuntimeQueryIdStore::new(
+            Some(temp.path().join("query-ids.json")),
+            Some(Duration::from_secs(60)),
+        );
+
+        let error = store
+            .refresh(&EmptyQueryIdTransport, &["Bookmarks".to_owned()])
+            .expect_err("empty discovery should fail");
+
+        assert!(error.to_string().contains("No GraphQL query IDs discovered"));
+    }
+
+    #[test]
+    fn required_refresh_rejects_an_unrelated_discovery() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = RuntimeQueryIdStore::new(
+            Some(temp.path().join("query-ids.json")),
+            Some(Duration::from_secs(60)),
+        );
+
+        let error = store
+            .refresh_required(
+                &UnrelatedQueryIdTransport,
+                &["Bookmarks".to_owned(), "CreateTweet".to_owned()],
+                "Bookmarks",
+            )
+            .expect_err("required operation should be newly discovered");
+
+        assert!(error.to_string().contains("current Bookmarks query"));
     }
 }

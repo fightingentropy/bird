@@ -71,7 +71,11 @@ pub fn find_tweet_in_instructions(instructions: Option<&[Value]>, tweet_id: &str
                 .cloned();
             if maybe_result
                 .as_ref()
-                .and_then(|result| result.get("rest_id").and_then(Value::as_str))
+                .and_then(|result| {
+                    unwrap_tweet_result(result)
+                        .get("rest_id")
+                        .and_then(Value::as_str)
+                })
                 == Some(tweet_id)
             {
                 return maybe_result;
@@ -264,7 +268,7 @@ fn collect_tweet_results_from_entry(entry: &Value) -> Vec<&Value> {
         &["item", "itemContent", "tweet_results", "result"][..],
     ] {
         if let Some(result) = content.and_then(|content| vget(content, path)) {
-            if result.get("rest_id").is_some() {
+            if unwrap_tweet_result(result).get("rest_id").is_some() {
                 results.push(result);
             }
         }
@@ -277,7 +281,7 @@ fn collect_tweet_results_from_entry(entry: &Value) -> Vec<&Value> {
                 &["content", "itemContent", "tweet_results", "result"][..],
             ] {
                 if let Some(result) = vget(item, path) {
-                    if result.get("rest_id").is_some() {
+                    if unwrap_tweet_result(result).get("rest_id").is_some() {
                         results.push(result);
                     }
                 }
@@ -531,4 +535,76 @@ fn vget<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
         current = current.get(*segment)?;
     }
     Some(current)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+
+    use super::{
+        collect_tweet_results_from_entry, find_tweet_in_instructions, unwrap_tweet_result,
+    };
+
+    #[test]
+    fn collects_tweet_with_visibility_results() {
+        let entry = json!({
+            "content": {
+                "itemContent": {
+                    "tweet_results": {
+                        "result": {
+                            "__typename": "TweetWithVisibilityResults",
+                            "tweet": {
+                                "__typename": "Tweet",
+                                "rest_id": "123"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let results = collect_tweet_results_from_entry(&entry);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            unwrap_tweet_result(results[0])
+                .get("rest_id")
+                .and_then(Value::as_str),
+            Some("123")
+        );
+    }
+
+    #[test]
+    fn finds_wrapped_tweet_in_instructions() {
+        let instructions = json!([{
+            "entries": [{
+                "content": {
+                    "itemContent": {
+                        "tweet_results": {
+                            "result": {
+                                "__typename": "TweetWithVisibilityResults",
+                                "tweet": {
+                                    "__typename": "Tweet",
+                                    "rest_id": "123"
+                                }
+                            }
+                        }
+                    }
+                }
+            }]
+        }]);
+
+        let found = find_tweet_in_instructions(
+            instructions.as_array().map(Vec::as_slice),
+            "123",
+        )
+        .expect("wrapped tweet");
+
+        assert_eq!(
+            unwrap_tweet_result(&found)
+                .get("rest_id")
+                .and_then(Value::as_str),
+            Some("123")
+        );
+    }
 }
