@@ -1,0 +1,36 @@
+name: Security
+
+on:
+  schedule:
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.lock
+      - third_party/curl-impersonate/distfiles/**
+      - third_party/curl-impersonate/SBOM.spdx.json
+
+permissions:
+  contents: read
+
+jobs:
+  vendor-integrity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Vendored Hashes, Archive Entries, and SBOM
+        run: python3 scripts/vendor-supply-chain.py --check-sbom
+
+  vulnerability-scan:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.8
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    with:
+      scan-args: |-
+        --recursive
+        ./
+      fail-on-vuln: true

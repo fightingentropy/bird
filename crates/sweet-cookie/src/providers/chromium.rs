@@ -6,9 +6,9 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use aes::Aes128;
-use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
 #[cfg(test)]
 use cbc::cipher::BlockEncryptMut;
+use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
 use pbkdf2::pbkdf2_hmac;
 use rusqlite::Connection;
 use sha1::Sha1;
@@ -57,19 +57,22 @@ pub(crate) fn get_cookies_from_chromium(
     let _ = copy_sidecar(&db_path, &temp_db_path, "-wal");
     let _ = copy_sidecar(&db_path, &temp_db_path, "-shm");
 
-    let password = match read_keychain_password(browser, timeout.unwrap_or(Duration::from_secs(3))) {
+    let password = match read_keychain_password(browser, timeout.unwrap_or(Duration::from_secs(3)))
+    {
         Ok(password) => password,
         Err(error) => {
             return Ok(GetCookiesResult {
                 cookies: Vec::new(),
                 warnings: vec![error],
-            })
+            });
         }
     };
     if password.trim().is_empty() {
         return Ok(GetCookiesResult {
             cookies: Vec::new(),
-            warnings: vec!["macOS Keychain returned an empty Chromium Safe Storage password.".to_owned()],
+            warnings: vec![
+                "macOS Keychain returned an empty Chromium Safe Storage password.".to_owned(),
+            ],
         });
     }
 
@@ -166,7 +169,11 @@ fn read_chromium_sqlite_db(
             name,
             value: resolved_value,
             domain: Some(host_key.trim_start_matches('.').to_owned()),
-            path: Some(if path.is_empty() { "/".to_owned() } else { path }),
+            path: Some(if path.is_empty() {
+                "/".to_owned()
+            } else {
+                path
+            }),
             url: None,
             expires,
             secure: is_secure == 1,
@@ -184,29 +191,36 @@ fn read_chromium_sqlite_db(
 }
 
 fn resolve_chromium_cookies_db(browser: BrowserName, profile: Option<&str>) -> Option<PathBuf> {
-    if let Some(profile) = profile {
-        if looks_like_path(profile) {
-            let path = expand_path(profile);
-            if path.is_file() {
-                return Some(path);
-            }
-            for candidate in [path.join("Cookies"), path.join("Network/Cookies")] {
-                if candidate.exists() {
-                    return Some(candidate);
-                }
+    if let Some(profile) = profile
+        && looks_like_path(profile)
+    {
+        let path = expand_path(profile);
+        if path.is_file() {
+            return Some(path);
+        }
+        for candidate in [path.join("Cookies"), path.join("Network/Cookies")] {
+            if candidate.exists() {
+                return Some(candidate);
             }
         }
     }
 
     let home = dirs::home_dir()?;
     let roots = match (std::env::consts::OS, browser) {
-        ("macos", BrowserName::Chrome) => vec![home.join("Library/Application Support/Google/Chrome")],
-        ("macos", BrowserName::Edge) => vec![home.join("Library/Application Support/Microsoft Edge")],
+        ("macos", BrowserName::Chrome) => {
+            vec![home.join("Library/Application Support/Google/Chrome")]
+        }
+        ("macos", BrowserName::Edge) => {
+            vec![home.join("Library/Application Support/Microsoft Edge")]
+        }
         _ => Vec::new(),
     };
     let profile_dir = profile.unwrap_or("Default");
     for root in roots {
-        for candidate in [root.join(profile_dir).join("Cookies"), root.join(profile_dir).join("Network/Cookies")] {
+        for candidate in [
+            root.join(profile_dir).join("Cookies"),
+            root.join(profile_dir).join("Network/Cookies"),
+        ] {
             if candidate.exists() {
                 return Some(candidate);
             }
@@ -257,7 +271,9 @@ fn read_keychain_generic_password(
     } else {
         Err(format!(
             "Failed to read macOS Keychain ({label}): {}",
-            stderr.trim().if_empty_then("permission denied / keychain locked / entry missing.")
+            stderr
+                .trim()
+                .if_empty_then("permission denied / keychain locked / entry missing.")
         ))
     }
 }
@@ -291,16 +307,18 @@ fn decrypt_chromium_cookie_value(
         payload
     };
     let value = String::from_utf8(payload).ok()?;
-    Some(value.trim_start_matches(|char: char| char.is_control()).to_owned())
+    Some(
+        value
+            .trim_start_matches(|char: char| char.is_control())
+            .to_owned(),
+    )
 }
 
 fn read_chromium_meta_version(connection: &Connection) -> Option<i64> {
     connection
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'version'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
+        .query_row("SELECT value FROM meta WHERE key = 'version'", [], |row| {
+            row.get::<_, String>(0)
+        })
         .ok()
         .and_then(|value| value.parse::<i64>().ok())
 }
@@ -385,10 +403,7 @@ mod tests {
             )
             .unwrap();
         connection
-            .execute(
-                "INSERT INTO meta (key, value) VALUES ('version', '23')",
-                [],
-            )
+            .execute("INSERT INTO meta (key, value) VALUES ('version', '23')", [])
             .unwrap();
         let key = derive_mac_key("test-password");
         let encrypted_value = encrypt_test_cookie("abc123", &key);

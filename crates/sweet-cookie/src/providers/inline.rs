@@ -4,13 +4,25 @@ use std::fs;
 use base64::Engine;
 use url::Url;
 
-use crate::util::{cookie_matches_hosts, dedupe_cookies, hosts_from_origins, safe_hostname_from_url};
+use crate::util::{
+    cookie_matches_hosts, dedupe_cookies, hosts_from_origins, safe_hostname_from_url,
+};
 use crate::{Cookie, GetCookiesResult};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct InlineSource {
     pub(crate) source: String,
     pub(crate) payload: String,
+}
+
+impl std::fmt::Debug for InlineSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InlineSource")
+            .field("source", &self.source)
+            .field("payload", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -67,7 +79,9 @@ fn try_decode_base64_json(raw: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    let bytes = base64::engine::general_purpose::STANDARD.decode(trimmed).ok()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(trimmed)
+        .ok()?;
     let decoded = String::from_utf8(bytes).ok()?;
     serde_json::from_str::<serde_json::Value>(&decoded).ok()?;
     Some(decoded)
@@ -115,9 +129,8 @@ mod tests {
 
     #[test]
     fn decodes_base64_payloads() {
-        let payload = base64::engine::general_purpose::STANDARD.encode(
-            r#"[{"name":"ct0","value":"123","domain":"x.com"}]"#,
-        );
+        let payload = base64::engine::general_purpose::STANDARD
+            .encode(r#"[{"name":"ct0","value":"123","domain":"x.com"}]"#);
         let result = get_cookies_from_inline(
             &InlineSource {
                 source: "inline-base64".to_owned(),

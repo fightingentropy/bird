@@ -11,7 +11,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use providers::{get_cookies_from_chromium, get_cookies_from_firefox, get_cookies_from_inline, get_cookies_from_safari, InlineSource};
+use providers::{
+    InlineSource, get_cookies_from_chromium, get_cookies_from_firefox, get_cookies_from_inline,
+    get_cookies_from_safari,
+};
 use url::Url;
 use util::{
     default_browsers, normalize_names, normalize_origins, parse_browsers_env, parse_mode_env,
@@ -26,7 +29,9 @@ pub fn get_cookies(options: GetCookiesOptions) -> anyhow::Result<GetCookiesResul
     } else {
         options.browsers.clone()
     };
-    let mode = options.mode.unwrap_or_else(|| parse_mode_env().unwrap_or_default());
+    let mode = options
+        .mode
+        .unwrap_or_else(|| parse_mode_env().unwrap_or_default());
     let mut warnings = Vec::new();
 
     for source in resolve_inline_sources(&options) {
@@ -43,9 +48,11 @@ pub fn get_cookies(options: GetCookiesOptions) -> anyhow::Result<GetCookiesResul
         let result = match browser {
             BrowserName::Chrome => get_cookies_from_chromium(
                 BrowserName::Chrome,
-                options.chrome_profile.clone().or_else(|| options.profile.clone()).or_else(|| {
-                    read_env_nonempty("SWEET_COOKIE_CHROME_PROFILE")
-                }),
+                options
+                    .chrome_profile
+                    .clone()
+                    .or_else(|| options.profile.clone())
+                    .or_else(|| read_env_nonempty("SWEET_COOKIE_CHROME_PROFILE")),
                 &origins,
                 allowlist_names.as_ref(),
                 options.include_expired,
@@ -128,6 +135,19 @@ pub fn to_cookie_header(cookies: &[Cookie], options: CookieHeaderOptions) -> Str
         .map(|(name, value)| format!("{name}={value}"))
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+/// Render a diagnostic cookie header without exposing any cookie values.
+pub fn to_redacted_cookie_header(cookies: &[Cookie], options: CookieHeaderOptions) -> String {
+    let redacted = cookies
+        .iter()
+        .cloned()
+        .map(|mut cookie| {
+            cookie.value = "[REDACTED]".to_owned();
+            cookie
+        })
+        .collect::<Vec<_>>();
+    to_cookie_header(&redacted, options)
 }
 
 fn resolve_inline_sources(options: &GetCookiesOptions) -> Vec<InlineSource> {
@@ -236,6 +256,30 @@ mod tests {
             },
         );
         assert_eq!(header, "auth_token=abc; ct0=123");
+    }
+
+    #[test]
+    fn cookie_debug_json_and_diagnostic_header_are_redacted() {
+        let cookie = Cookie {
+            name: "auth_token".to_owned(),
+            value: "session-secret".to_owned(),
+            domain: Some("x.com".to_owned()),
+            path: Some("/".to_owned()),
+            url: None,
+            expires: None,
+            secure: true,
+            http_only: true,
+            same_site: None,
+            source: None,
+        };
+
+        let debug = format!("{cookie:?}");
+        let json = serde_json::to_string(&cookie).expect("serialize cookie");
+        let header = to_redacted_cookie_header(&[cookie], CookieHeaderOptions::default());
+        for output in [debug, json, header] {
+            assert!(!output.contains("session-secret"));
+            assert!(output.contains("[REDACTED]"));
+        }
     }
 
     #[test]

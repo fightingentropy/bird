@@ -7,6 +7,7 @@ INSTALL_DIR="${BIRD_INSTALL_DIR:-$HOME/.local/bin}"
 RELEASE_BASE_URL="${BIRD_RELEASE_BASE_URL:-}"
 VERSION="${BIRD_VERSION:-}"
 BINARIES="${BIRD_BINARIES:-bird,sweet-cookie-diagnose}"
+VERIFY_ATTESTATION="${BIRD_VERIFY_ATTESTATION:-0}"
 
 log() {
   printf '%s\n' "$*"
@@ -67,13 +68,81 @@ compute_sha256() {
 }
 
 verify_checksum() {
-  local archive_path checksum_path expected actual
+  local archive_path checksum_path expected checksum_filename extra actual
   archive_path="$1"
   checksum_path="$2"
-  expected="$(awk 'NR==1 { print $1 }' "$checksum_path")"
-  [[ -n "$expected" ]] || fail "checksum file is empty: $checksum_path"
+  [[ "$(awk 'END { print NR }' "$checksum_path")" == "1" ]] \
+    || fail "checksum file must contain exactly one line"
+  read -r expected checksum_filename extra < "$checksum_path" || fail "checksum file is empty: $checksum_path"
+  checksum_filename="${checksum_filename#\*}"
+  [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] || fail "checksum file has an invalid SHA-256 digest"
+  [[ "$checksum_filename" == "$(basename "$archive_path")" ]] \
+    || fail "checksum file names an unexpected archive: ${checksum_filename:-missing}"
+  [[ -z "${extra:-}" ]] || fail "checksum file contains unexpected fields"
   actual="$(compute_sha256 "$archive_path")"
+  expected="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
+  actual="$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')"
   [[ "$expected" == "$actual" ]] || fail "checksum mismatch for $(basename "$archive_path")"
+}
+
+validate_archive_entries() {
+  local archive_path package_name listing verbose entry component type
+  archive_path="$1"
+  package_name="$2"
+  listing="${TMP_DIR}/archive-entries.txt"
+  verbose="${TMP_DIR}/archive-entries.verbose.txt"
+
+  tar -tzf "$archive_path" > "$listing" || fail "could not list release archive"
+  tar -tvzf "$archive_path" > "$verbose" || fail "could not inspect release archive entry types"
+  [[ -s "$listing" ]] || fail "release archive is empty"
+
+  while IFS= read -r entry || [[ -n "$entry" ]]; do
+    [[ -n "$entry" ]] || fail "release archive contains an empty entry name"
+    [[ "$entry" != /* && "$entry" != *\\* ]] \
+      || fail "release archive contains an unsafe path: $entry"
+    IFS='/' read -r -a components <<< "$entry"
+    for component in "${components[@]}"; do
+      [[ "$component" != ".." && "$component" != "." && -n "$component" ]] \
+        || [[ "$component" == "" && "$entry" == */ ]] \
+        || fail "release archive contains path traversal: $entry"
+    done
+    case "$entry" in
+      "$package_name"/|"$package_name"/bin/|"$package_name"/bin/bird|\
+      "$package_name"/bin/sweet-cookie-diagnose|"$package_name"/README.md|\
+      "$package_name"/BUILD-INFO.txt|"$package_name"/SBOM.spdx.json)
+        ;;
+      *)
+        fail "release archive contains an unexpected entry: $entry"
+        ;;
+    esac
+  done < "$listing"
+
+  [[ -z "$(sort "$listing" | uniq -d)" ]] || fail "release archive contains duplicate entries"
+  for entry in \
+    "$package_name/bin/bird" \
+    "$package_name/bin/sweet-cookie-diagnose" \
+    "$package_name/README.md" \
+    "$package_name/BUILD-INFO.txt" \
+    "$package_name/SBOM.spdx.json"; do
+    grep -Fxq "$entry" "$listing" || fail "release archive is missing $entry"
+  done
+
+  while IFS= read -r entry || [[ -n "$entry" ]]; do
+    type="${entry:0:1}"
+    [[ "$type" == "-" || "$type" == "d" ]] \
+      || fail "release archive contains a link or special file"
+  done < "$verbose"
+}
+
+verify_attestation() {
+  local archive_path="$1"
+  [[ "$VERIFY_ATTESTATION" == "1" ]] || return 0
+  [[ -z "$RELEASE_BASE_URL" ]] \
+    || fail "attestation verification is available only for GitHub-hosted releases"
+  require_tool gh
+  gh attestation verify "$archive_path" --repo "$REPO" \
+    || fail "GitHub artifact attestation verification failed"
+  log "verified GitHub artifact attestation for $(basename "$archive_path")"
 }
 
 install_binary() {
@@ -82,7 +151,7 @@ install_binary() {
   binary="$2"
   source="${package_dir}/bin/${binary}"
   target="${INSTALL_DIR}/${binary}"
-  [[ -f "$source" ]] || fail "release archive is missing ${binary}"
+  [[ -f "$source" && ! -L "$source" ]] || fail "release archive is missing a regular ${binary}"
   install -m 755 "$source" "$target"
   log "installed ${target}"
 }
@@ -115,6 +184,14 @@ print_path_hint() {
 
 trap cleanup EXIT
 
+if [[ "${BIRD_TEST_VALIDATE_ARCHIVE:-}" == "1" ]]; then
+  [[ $# -eq 2 ]] || fail "archive validation test mode expects ARCHIVE PACKAGE_NAME"
+  TMP_DIR="$(mktemp -d)"
+  chmod 700 "$TMP_DIR"
+  validate_archive_entries "$1" "$2"
+  exit 0
+fi
+
 require_tool curl
 require_tool tar
 require_tool install
@@ -145,6 +222,7 @@ else
 fi
 
 TMP_DIR="$(mktemp -d)"
+chmod 700 "$TMP_DIR"
 ARCHIVE_PATH="${TMP_DIR}/${ARCHIVE_NAME}"
 CHECKSUM_PATH="${TMP_DIR}/${CHECKSUM_NAME}"
 
@@ -155,10 +233,12 @@ mkdir -p "$INSTALL_DIR"
 http_get "$ARCHIVE_URL" > "$ARCHIVE_PATH" || fail "failed to download ${ARCHIVE_URL}"
 http_get "$CHECKSUM_URL" > "$CHECKSUM_PATH" || fail "failed to download ${CHECKSUM_URL}"
 verify_checksum "$ARCHIVE_PATH" "$CHECKSUM_PATH"
+verify_attestation "$ARCHIVE_PATH"
 
+validate_archive_entries "$ARCHIVE_PATH" "$PACKAGE_NAME"
 tar -xzf "$ARCHIVE_PATH" -C "$TMP_DIR"
 PACKAGE_DIR="${TMP_DIR}/${PACKAGE_NAME}"
-[[ -d "$PACKAGE_DIR" ]] || fail "release archive did not unpack ${PACKAGE_NAME}"
+[[ -d "$PACKAGE_DIR" && ! -L "$PACKAGE_DIR" ]] || fail "release archive did not unpack a regular ${PACKAGE_NAME} directory"
 
 IFS=',' read -r -a BIN_LIST <<< "$BINARIES"
 INSTALLED_BIRD=0

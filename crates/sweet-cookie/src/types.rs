@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -30,9 +31,10 @@ pub struct CookieSourceInfo {
     pub store_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cookie {
     pub name: String,
+    #[serde(serialize_with = "serialize_redacted_value")]
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
@@ -44,12 +46,41 @@ pub struct Cookie {
     pub expires: Option<i64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub secure: bool,
-    #[serde(default, rename = "httpOnly", skip_serializing_if = "std::ops::Not::not")]
+    #[serde(
+        default,
+        rename = "httpOnly",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     pub http_only: bool,
     #[serde(rename = "sameSite", skip_serializing_if = "Option::is_none")]
     pub same_site: Option<CookieSameSite>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<CookieSourceInfo>,
+}
+
+impl fmt::Debug for Cookie {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Cookie")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .field("domain", &self.domain)
+            .field("path", &self.path)
+            .field("url", &self.url)
+            .field("expires", &self.expires)
+            .field("secure", &self.secure)
+            .field("http_only", &self.http_only)
+            .field("same_site", &self.same_site)
+            .field("source", &self.source)
+            .finish()
+    }
+}
+
+fn serialize_redacted_value<S>(_value: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str("[REDACTED]")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -59,7 +90,7 @@ pub enum CookieMode {
     First,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct GetCookiesOptions {
     pub url: String,
     pub origins: Vec<String>,
@@ -77,6 +108,36 @@ pub struct GetCookiesOptions {
     pub inline_cookies_file: Option<PathBuf>,
     pub inline_cookies_json: Option<String>,
     pub inline_cookies_base64: Option<String>,
+}
+
+impl fmt::Debug for GetCookiesOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GetCookiesOptions")
+            .field("url", &self.url)
+            .field("origins", &self.origins)
+            .field("names", &self.names)
+            .field("browsers", &self.browsers)
+            .field("profile", &self.profile)
+            .field("chrome_profile", &self.chrome_profile)
+            .field("edge_profile", &self.edge_profile)
+            .field("firefox_profile", &self.firefox_profile)
+            .field("safari_cookies_file", &self.safari_cookies_file)
+            .field("include_expired", &self.include_expired)
+            .field("timeout", &self.timeout)
+            .field("debug", &self.debug)
+            .field("mode", &self.mode)
+            .field("inline_cookies_file", &self.inline_cookies_file)
+            .field(
+                "inline_cookies_json",
+                &self.inline_cookies_json.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "inline_cookies_base64",
+                &self.inline_cookies_base64.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

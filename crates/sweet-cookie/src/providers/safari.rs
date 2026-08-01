@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 use url::Url;
 
-use crate::util::{cookie_matches_hosts, dedupe_cookies, hosts_from_origins, safe_hostname_from_url};
+use crate::util::{
+    cookie_matches_hosts, dedupe_cookies, hosts_from_origins, safe_hostname_from_url,
+};
 use crate::{Cookie, CookieSourceInfo, GetCookiesResult};
 
 const MAC_EPOCH_DELTA_SECONDS: i64 = 978_307_200;
@@ -60,7 +62,9 @@ pub(crate) fn get_cookies_from_safari(
                 .map(|domain| cookie_matches_hosts(domain, &hosts))
                 .unwrap_or(false)
         })
-        .filter(|cookie| include_expired || cookie.expires.map(|expires| expires >= now).unwrap_or(true))
+        .filter(|cookie| {
+            include_expired || cookie.expires.map(|expires| expires >= now).unwrap_or(true)
+        })
         .collect::<Vec<_>>();
 
     Ok(GetCookiesResult {
@@ -89,7 +93,8 @@ fn decode_binary_cookies(buffer: &[u8]) -> Vec<Cookie> {
         if cursor + 4 > buffer.len() {
             return Vec::new();
         }
-        page_sizes.push(u32::from_be_bytes(buffer[cursor..cursor + 4].try_into().unwrap()) as usize);
+        page_sizes
+            .push(u32::from_be_bytes(buffer[cursor..cursor + 4].try_into().unwrap()) as usize);
         cursor += 4;
     }
 

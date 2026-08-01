@@ -15,15 +15,12 @@ static BUNDLE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"https://abs\.twimg\.com/responsive-web/client-web(?:-legacy)?/[A-Za-z0-9.\-]+\.js")
         .expect("valid regex")
 });
-static CHUNK_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(\d+):"([^"]*bundle\.Bookmarks[^"]*)""#).expect("valid regex")
-});
-static CHUNK_HASH_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(\d+):"([a-f0-9]{7,})""#).expect("valid regex")
-});
-static CHUNK_SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"\}\)\[e\]\+"([^"]*\.js)""#).expect("valid regex")
-});
+static CHUNK_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(\d+):"([^"]*bundle\.Bookmarks[^"]*)""#).expect("valid regex"));
+static CHUNK_HASH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(\d+):"([a-f0-9]{7,})""#).expect("valid regex"));
+static CHUNK_SUFFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"\}\)\[e\]\+"([^"]*\.js)""#).expect("valid regex"));
 static QUERY_ID_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
         Regex::new(r#"e\.exports=\{queryId\s*:\s*["']([^"']+)["']\s*,\s*operationName\s*:\s*["']([^"']+)["']"#).expect("valid regex"),
@@ -86,15 +83,24 @@ pub fn fallback_query_ids() -> BTreeMap<String, String> {
         ("Following".into(), "BEkNpEt5pNETESoqMsTEGA".into()),
         ("Followers".into(), "kuFUYP9eV1FPoEy4N-pi7w".into()),
         ("Likes".into(), "JR2gceKucIKcVNB_9JkhsA".into()),
-        ("BookmarkFolderTimeline".into(), "KJIQpsvxrTfRIlbaRIySHQ".into()),
+        (
+            "BookmarkFolderTimeline".into(),
+            "KJIQpsvxrTfRIlbaRIySHQ".into(),
+        ),
         ("ListOwnerships".into(), "wQcOSjSQ8NtgxIwvYl1lMg".into()),
-        ("ListLatestTweetsTimeline".into(), "2TemLyqrMpTeAmysdbnVqw".into()),
+        (
+            "ListLatestTweetsTimeline".into(),
+            "2TemLyqrMpTeAmysdbnVqw".into(),
+        ),
         ("ListByRestId".into(), "wXzyA5vM_aVkBL9G8Vp3kw".into()),
         ("HomeTimeline".into(), "edseUwk9sP5Phz__9TIRnA".into()),
         ("HomeLatestTimeline".into(), "iOEZpOdfekFsxSlPQCQtPg".into()),
         ("ExploreSidebar".into(), "lpSN4M6qpimkF4nRFPE3nQ".into()),
         ("ExplorePage".into(), "kheAINB_4pzRDqkzG3K-ng".into()),
-        ("GenericTimelineById".into(), "uGSr7alSjR9v6QJAIaqSKQ".into()),
+        (
+            "GenericTimelineById".into(),
+            "uGSr7alSjR9v6QJAIaqSKQ".into(),
+        ),
         ("TrendHistory".into(), "Sj4T-jSB9pr0Mxtsc1UKZQ".into()),
         ("AboutAccountQuery".into(), "zs_jFPFT78rBpXv9Z3U2YQ".into()),
     ])
@@ -132,8 +138,7 @@ impl RuntimeQueryIdStore {
             .unwrap_or_else(|error| error.into_inner())
             .as_ref()
             .and_then(|snapshot| snapshot.ids.get(operation).cloned());
-        cached_id
-            .or_else(|| fallback_query_ids().get(operation).cloned())
+        cached_id.or_else(|| fallback_query_ids().get(operation).cloned())
     }
 
     pub fn snapshot(&self) -> QueryIdSnapshot {
@@ -167,7 +172,11 @@ impl RuntimeQueryIdStore {
         }
     }
 
-    pub fn refresh(&self, transport: &dyn HttpTransport, operations: &[String]) -> anyhow::Result<QueryIdSnapshot> {
+    pub fn refresh(
+        &self,
+        transport: &dyn HttpTransport,
+        operations: &[String],
+    ) -> anyhow::Result<QueryIdSnapshot> {
         self.refresh_inner(transport, operations, None)
     }
 
@@ -191,12 +200,12 @@ impl RuntimeQueryIdStore {
         if discovered.is_empty() {
             anyhow::bail!("No GraphQL query IDs discovered; refusing to reuse a stale cache.");
         }
-        if let Some(required_operation) = required_operation {
-            if !discovered.contains_key(required_operation) {
-                anyhow::bail!(
-                    "Could not discover the current {required_operation} query; refusing to reuse a stale cache."
-                );
-            }
+        if let Some(required_operation) = required_operation
+            && !discovered.contains_key(required_operation)
+        {
+            anyhow::bail!(
+                "Could not discover the current {required_operation} query; refusing to reuse a stale cache."
+            );
         }
         let mut ids = self
             .read_snapshot()
@@ -208,7 +217,10 @@ impl RuntimeQueryIdStore {
             ttl_ms: self.ttl.as_millis() as u64,
             ids,
             discovery: Discovery {
-                pages: DISCOVERY_PAGES.iter().map(|page| (*page).to_owned()).collect(),
+                pages: DISCOVERY_PAGES
+                    .iter()
+                    .map(|page| (*page).to_owned())
+                    .collect(),
                 bundles: bundle_urls
                     .into_iter()
                     .map(|url| url.rsplit('/').next().unwrap_or(url.as_str()).to_owned())
@@ -218,7 +230,10 @@ impl RuntimeQueryIdStore {
         if let Some(parent) = self.cache_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&self.cache_path, format!("{}\n", serde_json::to_string_pretty(&snapshot)?))?;
+        fs::write(
+            &self.cache_path,
+            format!("{}\n", serde_json::to_string_pretty(&snapshot)?),
+        )?;
         *self
             .cached_snapshot()
             .write()
@@ -289,12 +304,7 @@ fn discover_lazy_bookmark_bundles(html: &str) -> Vec<String> {
     };
     let hashes = CHUNK_HASH_RE
         .captures_iter(html)
-        .filter_map(|capture| {
-            Some((
-                capture.get(1)?.as_str(),
-                capture.get(2)?.as_str(),
-            ))
-        })
+        .filter_map(|capture| Some((capture.get(1)?.as_str(), capture.get(2)?.as_str())))
         .collect::<BTreeMap<_, _>>();
 
     CHUNK_NAME_RE
@@ -366,7 +376,10 @@ fn extract_operations(js: &str, patterns: &[Regex]) -> Vec<(String, String)> {
 
 fn snapshot_age_ms(snapshot: &Snapshot) -> Option<u64> {
     let fetched_at = chrono_like_parse(&snapshot.fetched_at)?;
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_millis() as u64;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
     Some(now.saturating_sub(fetched_at))
 }
 
@@ -387,7 +400,7 @@ fn chrono_like_timestamp() -> (u64, u64, u64, u64, u64, u64) {
     time_like::utc_components(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs() as u64)
+            .map(|duration| duration.as_secs())
             .unwrap_or_default(),
     )
 }
@@ -399,7 +412,10 @@ mod time_like {
             return None;
         }
         let date = date_time[0].split('-').collect::<Vec<_>>();
-        let time = date_time[1].trim_end_matches('Z').split(':').collect::<Vec<_>>();
+        let time = date_time[1]
+            .trim_end_matches('Z')
+            .split(':')
+            .collect::<Vec<_>>();
         if date.len() != 3 || time.len() != 3 {
             return None;
         }
@@ -411,10 +427,7 @@ mod time_like {
         let minute = time[1].parse::<u32>().ok()?;
         let second = second_parts.first()?.parse::<u32>().ok()?;
         let days = days_since_unix_epoch(year, month, day)?;
-        Some(
-            ((days * 24 + hour as u64) * 60 + minute as u64) * 60_000
-                + second as u64 * 1_000,
-        )
+        Some(((days * 24 + hour as u64) * 60 + minute as u64) * 60_000 + second as u64 * 1_000)
     }
 
     pub fn utc_components(mut seconds: u64) -> (u64, u64, u64, u64, u64, u64) {
@@ -430,11 +443,7 @@ mod time_like {
 
     fn days_since_unix_epoch(year: i32, month: u32, day: u32) -> Option<u64> {
         let days = days_from_civil(year as i64, month as i64, day as i64);
-        if days < 0 {
-            None
-        } else {
-            Some(days as u64)
-        }
+        if days < 0 { None } else { Some(days as u64) }
     }
 
     fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
@@ -474,8 +483,8 @@ mod tests {
     use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
 
     use super::{
-        discover_lazy_bookmark_bundles, extract_operations, Discovery, RuntimeQueryIdStore,
-        Snapshot,
+        Discovery, RuntimeQueryIdStore, Snapshot, discover_lazy_bookmark_bundles,
+        extract_operations,
     };
 
     struct QueryIdTransport;
@@ -484,9 +493,10 @@ mod tests {
 
     impl HttpTransport for QueryIdTransport {
         fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
-            let body = if request.url.ends_with(
-                "shared~bundle.BookmarkFolders~bundle.Bookmarks.e9764eba.js",
-            ) {
+            let body = if request
+                .url
+                .ends_with("shared~bundle.BookmarkFolders~bundle.Bookmarks.e9764eba.js")
+            {
                 br#"e.exports={queryId:"new-bookmarks-id",operationName:"Bookmarks"}"#.to_vec()
             } else if request.url.ends_with(".js") {
                 Vec::new()
@@ -603,10 +613,7 @@ mod tests {
             serde_json::to_string(&snapshot).expect("snapshot JSON"),
         )
         .expect("cache write");
-        let store = RuntimeQueryIdStore::new(
-            Some(cache_path),
-            Some(Duration::from_secs(60)),
-        );
+        let store = RuntimeQueryIdStore::new(Some(cache_path), Some(Duration::from_secs(60)));
 
         assert_eq!(
             store.get_query_id("Bookmarks").as_deref(),
@@ -637,7 +644,11 @@ mod tests {
             .refresh(&EmptyQueryIdTransport, &["Bookmarks".to_owned()])
             .expect_err("empty discovery should fail");
 
-        assert!(error.to_string().contains("No GraphQL query IDs discovered"));
+        assert!(
+            error
+                .to_string()
+                .contains("No GraphQL query IDs discovered")
+        );
     }
 
     #[test]
