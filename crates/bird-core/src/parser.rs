@@ -23,10 +23,10 @@ pub fn parse_tweets_from_instructions(
         };
         for entry in entries {
             for result in collect_tweet_results_from_entry(entry) {
-                if let Some(tweet) = map_tweet_result(result, quote_depth, include_raw) {
-                    if seen.insert(tweet.id.clone()) {
-                        tweets.push(tweet);
-                    }
+                if let Some(tweet) = map_tweet_result(result, quote_depth, include_raw)
+                    && seen.insert(tweet.id.clone())
+                {
+                    tweets.push(tweet);
                 }
             }
         }
@@ -49,12 +49,11 @@ pub fn extract_cursor_from_instructions(
             let Some(found_cursor_type) = content.get("cursorType").and_then(Value::as_str) else {
                 continue;
             };
-            if found_cursor_type == cursor_type {
-                if let Some(value) = content.get("value").and_then(Value::as_str) {
-                    if !value.is_empty() {
-                        return Some(value.to_owned());
-                    }
-                }
+            if found_cursor_type == cursor_type
+                && let Some(value) = content.get("value").and_then(Value::as_str)
+                && !value.is_empty()
+            {
+                return Some(value.to_owned());
             }
         }
     }
@@ -67,16 +66,16 @@ pub fn find_tweet_in_instructions(instructions: Option<&[Value]>, tweet_id: &str
             continue;
         };
         for entry in entries {
-            let maybe_result = vget(entry, &["content", "itemContent", "tweet_results", "result"])
-                .cloned();
-            if maybe_result
-                .as_ref()
-                .and_then(|result| {
-                    unwrap_tweet_result(result)
-                        .get("rest_id")
-                        .and_then(Value::as_str)
-                })
-                == Some(tweet_id)
+            let maybe_result = vget(
+                entry,
+                &["content", "itemContent", "tweet_results", "result"],
+            )
+            .cloned();
+            if maybe_result.as_ref().and_then(|result| {
+                unwrap_tweet_result(result)
+                    .get("rest_id")
+                    .and_then(Value::as_str)
+            }) == Some(tweet_id)
             {
                 return maybe_result;
             }
@@ -145,9 +144,7 @@ pub fn parse_users_from_instructions(instructions: Option<&[Value]>) -> Vec<Twit
                 following_count: legacy
                     .and_then(|value| value.get("friends_count"))
                     .and_then(Value::as_u64),
-                is_blue_verified: user_result
-                    .get("is_blue_verified")
-                    .and_then(Value::as_bool),
+                is_blue_verified: user_result.get("is_blue_verified").and_then(Value::as_bool),
                 profile_image_url: first_text(&[
                     legacy.and_then(|value| value.get("profile_image_url_https")),
                     vget(user_result, &["avatar", "image_url"]),
@@ -185,12 +182,13 @@ pub fn parse_lists_from_instructions(instructions: Option<&[Value]>) -> Vec<Twit
     lists
 }
 
-pub fn map_tweet_result(result: &Value, quote_depth: usize, include_raw: bool) -> Option<TweetData> {
+pub fn map_tweet_result(
+    result: &Value,
+    quote_depth: usize,
+    include_raw: bool,
+) -> Option<TweetData> {
     let result = unwrap_tweet_result(result);
-    let user_result = vget(
-        result,
-        &["core", "user_results", "result"],
-    )?;
+    let user_result = vget(result, &["core", "user_results", "result"])?;
     let user_legacy = user_result.get("legacy");
     let user_core = user_result.get("core");
     let username = first_text(&[
@@ -267,23 +265,26 @@ fn collect_tweet_results_from_entry(entry: &Value) -> Vec<&Value> {
         &["itemContent", "tweet_results", "result"][..],
         &["item", "itemContent", "tweet_results", "result"][..],
     ] {
-        if let Some(result) = content.and_then(|content| vget(content, path)) {
-            if unwrap_tweet_result(result).get("rest_id").is_some() {
-                results.push(result);
-            }
+        if let Some(result) = content.and_then(|content| vget(content, path))
+            && unwrap_tweet_result(result).get("rest_id").is_some()
+        {
+            results.push(result);
         }
     }
-    if let Some(items) = content.and_then(|value| value.get("items")).and_then(Value::as_array) {
+    if let Some(items) = content
+        .and_then(|value| value.get("items"))
+        .and_then(Value::as_array)
+    {
         for item in items {
             for path in [
                 &["item", "itemContent", "tweet_results", "result"][..],
                 &["itemContent", "tweet_results", "result"][..],
                 &["content", "itemContent", "tweet_results", "result"][..],
             ] {
-                if let Some(result) = vget(item, path) {
-                    if unwrap_tweet_result(result).get("rest_id").is_some() {
-                        results.push(result);
-                    }
+                if let Some(result) = vget(item, path)
+                    && unwrap_tweet_result(result).get("rest_id").is_some()
+                {
+                    results.push(result);
                 }
             }
         }
@@ -330,7 +331,7 @@ fn parse_list_owner(value: &Value) -> Option<TwitterListOwner> {
     Some(TwitterListOwner { id, username, name })
 }
 
-fn unwrap_tweet_result<'a>(result: &'a Value) -> &'a Value {
+fn unwrap_tweet_result(result: &Value) -> &Value {
     result.get("tweet").unwrap_or(result)
 }
 
@@ -349,9 +350,30 @@ fn extract_tweet_text(result: &Value) -> Option<String> {
 
 fn extract_note_tweet_text(result: &Value) -> Option<String> {
     first_text(&[
-        vget(result, &["note_tweet", "note_tweet_results", "result", "text"]),
-        vget(result, &["note_tweet", "note_tweet_results", "result", "richtext", "text"]),
-        vget(result, &["note_tweet", "note_tweet_results", "result", "rich_text", "text"]),
+        vget(
+            result,
+            &["note_tweet", "note_tweet_results", "result", "text"],
+        ),
+        vget(
+            result,
+            &[
+                "note_tweet",
+                "note_tweet_results",
+                "result",
+                "richtext",
+                "text",
+            ],
+        ),
+        vget(
+            result,
+            &[
+                "note_tweet",
+                "note_tweet_results",
+                "result",
+                "rich_text",
+                "text",
+            ],
+        ),
     ])
 }
 
@@ -369,7 +391,12 @@ fn extract_article_text(result: &Value) -> Option<String> {
         vget(article_result, &["content", "text"]),
         article_result.get("text"),
     ]);
-    if body.as_ref().zip(title.as_ref()).map(|(body, title)| body == title).unwrap_or(false) {
+    if body
+        .as_ref()
+        .zip(title.as_ref())
+        .map(|(body, title)| body == title)
+        .unwrap_or(false)
+    {
         body = None;
     }
     if body.is_none() {
@@ -389,7 +416,9 @@ fn extract_article_text(result: &Value) -> Option<String> {
         }
     }
     match (title, body) {
-        (Some(title), Some(body)) if !body.starts_with(&title) => Some(format!("{title}\n\n{body}")),
+        (Some(title), Some(body)) if !body.starts_with(&title) => {
+            Some(format!("{title}\n\n{body}"))
+        }
         (_, Some(body)) => Some(body),
         (Some(title), None) => Some(title),
         _ => None,
@@ -407,7 +436,10 @@ fn extract_article_metadata(result: &Value) -> Option<TweetArticle> {
         article_result.get("preview_text"),
         article.get("preview_text"),
     ]);
-    Some(TweetArticle { title, preview_text })
+    Some(TweetArticle {
+        title,
+        preview_text,
+    })
 }
 
 fn extract_media(result: &Value) -> Option<Vec<TweetMedia>> {
@@ -424,7 +456,10 @@ fn extract_media(result: &Value) -> Option<Vec<TweetMedia>> {
         .iter()
         .filter_map(|item| {
             let media_type = item.get("type").and_then(Value::as_str)?.to_owned();
-            let url = item.get("media_url_https").and_then(Value::as_str)?.to_owned();
+            let url = item
+                .get("media_url_https")
+                .and_then(Value::as_str)?
+                .to_owned();
             let sizes = item.get("sizes");
             let width = sizes
                 .and_then(|sizes| sizes.get("large").or_else(|| sizes.get("medium")))
@@ -437,37 +472,39 @@ fn extract_media(result: &Value) -> Option<Vec<TweetMedia>> {
             let preview_url = sizes
                 .and_then(|sizes| sizes.get("small"))
                 .map(|_| format!("{url}:small"));
-            let (video_url, duration_ms) = if matches!(media_type.as_str(), "video" | "animated_gif")
-            {
-                let variants = item
-                    .get("video_info")
-                    .and_then(|value| value.get("variants"))
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                let mut mp4_variants = variants
-                    .into_iter()
-                    .filter(|variant| {
+            let (video_url, duration_ms) =
+                if matches!(media_type.as_str(), "video" | "animated_gif") {
+                    let variants = item
+                        .get("video_info")
+                        .and_then(|value| value.get("variants"))
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut mp4_variants = variants
+                        .into_iter()
+                        .filter(|variant| {
+                            variant.get("content_type").and_then(Value::as_str) == Some("video/mp4")
+                        })
+                        .collect::<Vec<_>>();
+                    mp4_variants.sort_by_key(|variant| {
                         variant
-                            .get("content_type")
-                            .and_then(Value::as_str)
-                            == Some("video/mp4")
-                    })
-                    .collect::<Vec<_>>();
-                mp4_variants.sort_by_key(|variant| variant.get("bitrate").and_then(Value::as_u64).unwrap_or_default());
-                let video_url = mp4_variants
-                    .last()
-                    .and_then(|variant| variant.get("url"))
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned);
-                let duration = item
-                    .get("video_info")
-                    .and_then(|value| value.get("duration_millis"))
-                    .and_then(Value::as_u64);
-                (video_url, duration)
-            } else {
-                (None, None)
-            };
+                            .get("bitrate")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default()
+                    });
+                    let video_url = mp4_variants
+                        .last()
+                        .and_then(|variant| variant.get("url"))
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned);
+                    let duration = item
+                        .get("video_info")
+                        .and_then(|value| value.get("duration_millis"))
+                        .and_then(Value::as_u64);
+                    (video_url, duration)
+                } else {
+                    (None, None)
+                };
             Some(TweetMedia {
                 media_type,
                 url,
@@ -479,11 +516,7 @@ fn extract_media(result: &Value) -> Option<Vec<TweetMedia>> {
             })
         })
         .collect::<Vec<_>>();
-    if media.is_empty() {
-        None
-    } else {
-        Some(media)
-    }
+    if media.is_empty() { None } else { Some(media) }
 }
 
 fn first_text(values: &[Option<&Value>]) -> Option<String> {
@@ -506,10 +539,13 @@ fn collect_text_fields(value: &Value, keys: &[&str], output: &mut Vec<String>) {
         }
         Value::Object(map) => {
             for (key, nested) in map {
-                if keys.contains(&key.as_str()) {
-                    if let Some(text) = nested.as_str().map(str::trim).filter(|text| !text.is_empty()) {
-                        output.push(text.to_owned());
-                    }
+                if keys.contains(&key.as_str())
+                    && let Some(text) = nested
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|text| !text.is_empty())
+                {
+                    output.push(text.to_owned());
                 }
                 collect_text_fields(nested, keys, output);
             }
@@ -539,7 +575,7 @@ fn vget<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::{
         collect_tweet_results_from_entry, find_tweet_in_instructions, unwrap_tweet_result,
@@ -594,11 +630,8 @@ mod tests {
             }]
         }]);
 
-        let found = find_tweet_in_instructions(
-            instructions.as_array().map(Vec::as_slice),
-            "123",
-        )
-        .expect("wrapped tweet");
+        let found = find_tweet_in_instructions(instructions.as_array().map(Vec::as_slice), "123")
+            .expect("wrapped tweet");
 
         assert_eq!(
             unwrap_tweet_result(&found)

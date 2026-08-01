@@ -28,11 +28,14 @@ mkdir -p "$DIST_DIR"
 rm -rf "$PACKAGE_DIR"
 mkdir -p "$PACKAGE_DIR/bin"
 
+python3 "$ROOT_DIR/scripts/vendor-supply-chain.py" --check-sbom
+
 cargo build --locked --release --target "$TARGET_TRIPLE" -p bird-cli --bin bird -p sweet-cookie --bin diagnose
 
 cp "$TARGET_RELEASE_DIR/bird" "$PACKAGE_DIR/bin/bird"
 cp "$TARGET_RELEASE_DIR/diagnose" "$PACKAGE_DIR/bin/sweet-cookie-diagnose"
 cp "$ROOT_DIR/README.md" "$PACKAGE_DIR/README.md"
+cp "$ROOT_DIR/third_party/curl-impersonate/SBOM.spdx.json" "$PACKAGE_DIR/SBOM.spdx.json"
 
 cat > "$PACKAGE_DIR/BUILD-INFO.txt" <<EOF
 version: $VERSION

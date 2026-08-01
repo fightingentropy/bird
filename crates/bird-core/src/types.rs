@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -12,15 +13,36 @@ pub enum CookieSource {
     Firefox,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct TwitterCookies {
+    #[serde(serialize_with = "serialize_redacted_option")]
     pub auth_token: Option<String>,
+    #[serde(serialize_with = "serialize_redacted_option")]
     pub ct0: Option<String>,
+    #[serde(serialize_with = "serialize_redacted_option")]
     pub cookie_header: Option<String>,
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+impl fmt::Debug for TwitterCookies {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TwitterCookies")
+            .field(
+                "auth_token",
+                &self.auth_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("ct0", &self.ct0.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "cookie_header",
+                &self.cookie_header.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("source", &self.source)
+            .finish()
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct ResolveCredentialsOptions {
     pub auth_token: Option<String>,
     pub ct0: Option<String>,
@@ -28,12 +50,64 @@ pub struct ResolveCredentialsOptions {
     pub chrome_profile: Option<String>,
     pub firefox_profile: Option<String>,
     pub cookie_timeout: Option<Duration>,
+    pub credential_source: Option<String>,
+}
+
+impl fmt::Debug for ResolveCredentialsOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResolveCredentialsOptions")
+            .field(
+                "auth_token",
+                &self.auth_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("ct0", &self.ct0.as_ref().map(|_| "[REDACTED]"))
+            .field("cookie_source", &self.cookie_source)
+            .field("chrome_profile", &self.chrome_profile)
+            .field("firefox_profile", &self.firefox_profile)
+            .field("cookie_timeout", &self.cookie_timeout)
+            .field("credential_source", &self.credential_source)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ResolvedCredentials {
     pub cookies: TwitterCookies,
     pub warnings: Vec<String>,
+}
+
+fn serialize_redacted_option<S>(value: &Option<String>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(_) => serializer.serialize_some("[REDACTED]"),
+        None => serializer.serialize_none(),
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::TwitterCookies;
+
+    #[test]
+    fn cookie_debug_and_json_are_redacted() {
+        let cookies = TwitterCookies {
+            auth_token: Some("auth-secret".into()),
+            ct0: Some("csrf-secret".into()),
+            cookie_header: Some("auth_token=auth-secret; ct0=csrf-secret".into()),
+            source: Some("test".into()),
+        };
+
+        let debug = format!("{cookies:?}");
+        let json = serde_json::to_string(&cookies).expect("serialize cookies");
+        for output in [debug, json] {
+            assert!(!output.contains("auth-secret"));
+            assert!(!output.contains("csrf-secret"));
+            assert!(output.contains("[REDACTED]"));
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

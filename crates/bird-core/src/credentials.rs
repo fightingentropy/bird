@@ -1,14 +1,17 @@
 use std::cmp::Reverse;
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use sweet_cookie::{
-    BrowserName, Cookie, CookieHeaderOptions, CookieHeaderSort, GetCookiesOptions,
-};
+use sweet_cookie::{BrowserName, Cookie, CookieHeaderOptions, CookieHeaderSort, GetCookiesOptions};
 
+use crate::register_secret_for_redaction;
 use crate::transport::{HttpRequest, HttpTransport};
 use crate::types::{CookieSource, ResolveCredentialsOptions, ResolvedCredentials, TwitterCookies};
 
@@ -16,13 +19,14 @@ const TWITTER_URL: &str = "https://x.com/";
 const TWITTER_ORIGINS: &[&str] = &["https://x.com/", "https://twitter.com/"];
 const DEFAULT_COOKIE_TIMEOUT: Duration = Duration::from_secs(30);
 const COOKIE_CACHE_TTL_MS: u64 = 24 * 60 * 60 * 1000;
+const KEYRING_SERVICE: &str = "dev.fightingentropy.bird";
+const KEYRING_ACCOUNT: &str = "twitter-session";
 const BEARER_TOKEN: &str = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct CookieCacheRecord {
     auth_token: String,
     ct0: String,
-    cookie_header: Option<String>,
     source: Option<String>,
     saved_at: u64,
 }
@@ -41,18 +45,22 @@ pub fn resolve_credentials(
     let mut cookies = TwitterCookies::default();
     let cookie_timeout = options.cookie_timeout.unwrap_or(DEFAULT_COOKIE_TIMEOUT);
 
+    let explicit_source = options
+        .credential_source
+        .unwrap_or_else(|| "secure credential input".to_owned());
     if let Some(auth_token) = options.auth_token {
         cookies.auth_token = Some(auth_token);
-        cookies.source = Some("CLI argument".to_owned());
+        cookies.source = Some(explicit_source.clone());
     }
     if let Some(ct0) = options.ct0 {
         cookies.ct0 = Some(ct0);
-        cookies.source.get_or_insert_with(|| "CLI argument".to_owned());
+        cookies.source.get_or_insert(explicit_source);
     }
     read_env_cookie(&mut cookies, &["AUTH_TOKEN", "TWITTER_AUTH_TOKEN"], true);
     read_env_cookie(&mut cookies, &["CT0", "TWITTER_CT0"], false);
 
     if cookies.auth_token.is_some() && cookies.ct0.is_some() {
+        register_cookie_secrets(&cookies);
         cookies.cookie_header = Some(format!(
             "auth_token={}; ct0={}",
             cookies.auth_token.as_deref().unwrap_or_default(),
@@ -62,13 +70,16 @@ pub fn resolve_credentials(
         return Ok(ResolvedCredentials { cookies, warnings });
     }
 
-    if let Some(cached) = load_cookie_cache() {
+    if let Some(cached) = load_cookie_cache(&mut warnings) {
         let cached_cookies = TwitterCookies {
             auth_token: Some(cached.auth_token),
             ct0: Some(cached.ct0),
-            cookie_header: cached.cookie_header,
+            // Legacy cache records may contain a full browser cookie header.
+            // Serde ignores that old field and bird rebuilds the minimum header.
+            cookie_header: None,
             source: cached.source,
         };
+        register_cookie_secrets(&cached_cookies);
         if verify_cookies(&cached_cookies, transport, default_user_agent()).is_ok() {
             return Ok(ResolvedCredentials {
                 cookies: cached_cookies,
@@ -78,7 +89,11 @@ pub fn resolve_credentials(
     }
 
     let sources = if options.cookie_source.is_empty() {
-        vec![CookieSource::Safari, CookieSource::Chrome, CookieSource::Firefox]
+        vec![
+            CookieSource::Safari,
+            CookieSource::Chrome,
+            CookieSource::Firefox,
+        ]
     } else {
         options.cookie_source
     };
@@ -91,8 +106,11 @@ pub fn resolve_credentials(
         )?;
         warnings.extend(result.warnings.clone());
         if result.cookies.auth_token.is_some() && result.cookies.ct0.is_some() {
+            register_cookie_secrets(&result.cookies);
             verify_cookies(&result.cookies, transport, default_user_agent())?;
-            save_cookie_cache(&result.cookies)?;
+            if let Some(warning) = save_cookie_cache(&result.cookies)? {
+                warnings.push(warning);
+            }
             return Ok(ResolvedCredentials {
                 cookies: result.cookies,
                 warnings,
@@ -101,10 +119,10 @@ pub fn resolve_credentials(
     }
 
     if cookies.auth_token.is_none() {
-        warnings.push("Missing auth_token - provide via --auth-token, AUTH_TOKEN env var, or login to x.com in Safari/Chrome/Firefox".to_owned());
+        warnings.push("Missing auth_token - provide secure JSON via --credentials-stdin/--credentials-fd, set AUTH_TOKEN, or login to x.com in Safari/Chrome/Firefox".to_owned());
     }
     if cookies.ct0.is_none() {
-        warnings.push("Missing ct0 - provide via --ct0, CT0 env var, or login to x.com in Safari/Chrome/Firefox".to_owned());
+        warnings.push("Missing ct0 - provide secure JSON via --credentials-stdin/--credentials-fd, set CT0, or login to x.com in Safari/Chrome/Firefox".to_owned());
     }
     if cookies.auth_token.is_some() && cookies.ct0.is_some() {
         cookies.cookie_header = Some(format!(
@@ -115,6 +133,19 @@ pub fn resolve_credentials(
     }
 
     Ok(ResolvedCredentials { cookies, warnings })
+}
+
+fn register_cookie_secrets(cookies: &TwitterCookies) {
+    for secret in [
+        cookies.auth_token.as_deref(),
+        cookies.ct0.as_deref(),
+        cookies.cookie_header.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        register_secret_for_redaction(secret);
+    }
 }
 
 fn read_twitter_cookies_from_browser(
@@ -130,7 +161,10 @@ fn read_twitter_cookies_from_browser(
     };
     let result = sweet_cookie::get_cookies(GetCookiesOptions {
         url: TWITTER_URL.to_owned(),
-        origins: TWITTER_ORIGINS.iter().map(|origin| (*origin).to_owned()).collect(),
+        origins: TWITTER_ORIGINS
+            .iter()
+            .map(|origin| (*origin).to_owned())
+            .collect(),
         names: Vec::new(),
         browsers: vec![browser],
         profile: None,
@@ -154,12 +188,10 @@ fn read_twitter_cookies_from_browser(
         cookie_header: None,
         source: Some(match source {
             CookieSource::Safari => "Safari".to_owned(),
-            CookieSource::Chrome => {
-                chrome_profile
-                    .clone()
-                    .map(|profile| format!("Chrome profile \"{profile}\""))
-                    .unwrap_or_else(|| "Chrome default profile".to_owned())
-            }
+            CookieSource::Chrome => chrome_profile
+                .clone()
+                .map(|profile| format!("Chrome profile \"{profile}\""))
+                .unwrap_or_else(|| "Chrome default profile".to_owned()),
             CookieSource::Firefox => firefox_profile
                 .clone()
                 .map(|profile| format!("Firefox profile \"{profile}\""))
@@ -200,11 +232,15 @@ pub fn verify_cookies(
     transport: &dyn HttpTransport,
     user_agent: &str,
 ) -> anyhow::Result<()> {
-    let auth_token = cookies.auth_token.as_deref().context("missing auth_token")?;
+    let auth_token = cookies
+        .auth_token
+        .as_deref()
+        .context("missing auth_token")?;
     let ct0 = cookies.ct0.as_deref().context("missing ct0")?;
-    let cookie_header = cookies.cookie_header.clone().unwrap_or_else(|| {
-        format!("auth_token={auth_token}; ct0={ct0}")
-    });
+    let cookie_header = cookies
+        .cookie_header
+        .clone()
+        .unwrap_or_else(|| format!("auth_token={auth_token}; ct0={ct0}"));
     for url in [
         "https://api.x.com/1.1/account/verify_credentials.json",
         "https://x.com/i/api/1.1/account/settings.json",
@@ -244,11 +280,21 @@ fn pick_cookie_value(cookies: &[Cookie], name: &str) -> Option<String> {
         .collect::<Vec<_>>();
     let preferred = matches
         .iter()
-        .find(|cookie| cookie.domain.as_deref().unwrap_or_default().ends_with("x.com"))
+        .find(|cookie| {
+            cookie
+                .domain
+                .as_deref()
+                .unwrap_or_default()
+                .ends_with("x.com")
+        })
         .or_else(|| {
-            matches
-                .iter()
-                .find(|cookie| cookie.domain.as_deref().unwrap_or_default().ends_with("twitter.com"))
+            matches.iter().find(|cookie| {
+                cookie
+                    .domain
+                    .as_deref()
+                    .unwrap_or_default()
+                    .ends_with("twitter.com")
+            })
         })
         .or_else(|| matches.first())?;
     Some(preferred.value.clone())
@@ -358,10 +404,25 @@ fn read_env_cookie(cookies: &mut TwitterCookies, keys: &[&str], auth: bool) {
     }
 }
 
-fn load_cookie_cache() -> Option<CookieCacheRecord> {
+fn load_cookie_cache(warnings: &mut Vec<String>) -> Option<CookieCacheRecord> {
+    match load_keyring_cookie_cache() {
+        Ok(Some(record)) => return fresh_cache_record(record),
+        Ok(None) => {}
+        Err(error) => warnings.push(format!(
+            "OS credential store unavailable ({error}); checking the permission-hardened legacy cache"
+        )),
+    }
+
     let path = default_cookie_cache_path();
+    if !harden_existing_cache_path(&path, warnings) {
+        return None;
+    }
     let raw = fs::read_to_string(path).ok()?;
     let parsed = serde_json::from_str::<CookieCacheRecord>(&raw).ok()?;
+    fresh_cache_record(parsed)
+}
+
+fn fresh_cache_record(parsed: CookieCacheRecord) -> Option<CookieCacheRecord> {
     let now = current_time_millis();
     if now.saturating_sub(parsed.saved_at) > COOKIE_CACHE_TTL_MS {
         return None;
@@ -369,12 +430,12 @@ fn load_cookie_cache() -> Option<CookieCacheRecord> {
     Some(parsed)
 }
 
-fn save_cookie_cache(cookies: &TwitterCookies) -> anyhow::Result<()> {
+fn save_cookie_cache(cookies: &TwitterCookies) -> anyhow::Result<Option<String>> {
     let Some(auth_token) = cookies.auth_token.clone() else {
-        return Ok(());
+        return Ok(None);
     };
     let Some(ct0) = cookies.ct0.clone() else {
-        return Ok(());
+        return Ok(None);
     };
     let path = default_cookie_cache_path();
     if let Some(parent) = path.parent() {
@@ -383,11 +444,93 @@ fn save_cookie_cache(cookies: &TwitterCookies) -> anyhow::Result<()> {
     let payload = CookieCacheRecord {
         auth_token,
         ct0,
-        cookie_header: cookies.cookie_header.clone(),
         source: cookies.source.clone(),
         saved_at: current_time_millis(),
     };
-    fs::write(path, format!("{}\n", serde_json::to_string_pretty(&payload)?))?;
+    let serialized = format!("{}\n", serde_json::to_string_pretty(&payload)?);
+    match save_keyring_cookie_cache(&serialized) {
+        Ok(()) => Ok(None),
+        Err(error) => {
+            secure_write(&path, serialized.as_bytes())?;
+            Ok(Some(format!(
+                "OS credential store unavailable ({error}); session cache is protected by 0700 directory and 0600 file permissions"
+            )))
+        }
+    }
+}
+
+fn keyring_entry() -> Result<keyring::v1::Entry, keyring::v1::Error> {
+    keyring::v1::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+}
+
+fn load_keyring_cookie_cache() -> anyhow::Result<Option<CookieCacheRecord>> {
+    let entry = keyring_entry().map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let raw = match entry.get_password() {
+        Ok(raw) => raw,
+        Err(keyring::v1::Error::NoEntry) => return Ok(None),
+        Err(error) => return Err(anyhow::anyhow!(error.to_string())),
+    };
+    let parsed = serde_json::from_str::<CookieCacheRecord>(&raw)
+        .context("OS credential-store entry is not valid bird cache JSON")?;
+    Ok(Some(parsed))
+}
+
+fn save_keyring_cookie_cache(payload: &str) -> anyhow::Result<()> {
+    let entry = keyring_entry().map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    entry
+        .set_password(payload)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+fn harden_existing_cache_path(path: &Path, warnings: &mut Vec<String>) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        warnings.push(format!(
+            "Ignoring unsafe cookie cache path {} (must be a regular file, not a link)",
+            path.display()
+        ));
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        if fs::set_permissions(path, fs::Permissions::from_mode(0o600)).is_err() {
+            warnings.push(format!(
+                "Ignoring cookie cache {} because permissions could not be restricted to 0600",
+                path.display()
+            ));
+            return false;
+        }
+        if let Some(parent) = path.parent()
+            && fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).is_err()
+        {
+            warnings.push(format!(
+                "Ignoring cookie cache {} because its directory could not be restricted to 0700",
+                path.display()
+            ));
+            return false;
+        }
+    }
+    true
+}
+
+fn secure_write(path: &Path, payload: &[u8]) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .context("cookie cache path has no parent directory")?;
+    fs::create_dir_all(parent)?;
+    #[cfg(unix)]
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    #[cfg(unix)]
+    fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o600))?;
+    temporary.write_all(payload)?;
+    temporary.as_file().sync_all()?;
+    #[cfg(unix)]
+    fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o600))?;
+    temporary.persist(path).map_err(|error| error.error)?;
     Ok(())
 }
 
@@ -400,9 +543,13 @@ fn current_time_millis() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use sweet_cookie::Cookie;
 
-    use super::build_cookie_header_from_cookies;
+    use super::{build_cookie_header_from_cookies, secure_write};
 
     #[test]
     fn cookie_header_prefers_auth_and_ct0_first() {
@@ -474,5 +621,26 @@ mod tests {
         );
 
         assert_eq!(header, "lang=modern");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn fallback_cache_write_uses_private_permissions() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("private/cache.json");
+        secure_write(&path, b"secret").expect("secure write");
+
+        let directory_mode = fs::metadata(path.parent().expect("parent"))
+            .expect("directory metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        let file_mode = fs::metadata(path)
+            .expect("file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(directory_mode, 0o700);
+        assert_eq!(file_mode, 0o600);
     }
 }

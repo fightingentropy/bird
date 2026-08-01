@@ -68,7 +68,7 @@ jobs:
       - name: Transport Sanity Check
         run: ./target/release/bird transport --json
 
-  test:
+  check:
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -101,8 +101,8 @@ jobs:
           path: target/curl-impersonate-cache
           key: curl-impersonate-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/curl-impersonate/distfiles/manifest.json', 'third_party/curl-impersonate/patches/**', 'crates/bird-curl-impersonate-sys/**') }}-${{ steps.compiler-stamp.outputs.value }}
 
-      - name: Run Tests
-        run: cargo test
+      - name: Run Unified Check
+        run: bash scripts/check.sh
 
   package:
     strategy:

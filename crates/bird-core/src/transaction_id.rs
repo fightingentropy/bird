@@ -83,7 +83,8 @@ impl TransactionState {
             ((time_now >> 16) & 0xff) as u8,
             ((time_now >> 24) & 0xff) as u8,
         ];
-        let mut bytes = Vec::with_capacity(1 + self.key_bytes.len() + time_now_bytes.len() + 16 + 1);
+        let mut bytes =
+            Vec::with_capacity(1 + self.key_bytes.len() + time_now_bytes.len() + 16 + 1);
         bytes.push(random_byte);
         for value in self
             .key_bytes
@@ -148,10 +149,10 @@ impl RuntimeTransactionIdStore {
         transport: &dyn HttpTransport,
         user_agent: &str,
     ) -> anyhow::Result<TransactionState> {
-        if let Some(state) = self.cached.lock().ok().and_then(|guard| guard.clone()) {
-            if state.created_at.elapsed() <= self.ttl {
-                return Ok(state.state);
-            }
+        if let Some(state) = self.cached.lock().ok().and_then(|guard| guard.clone())
+            && state.created_at.elapsed() <= self.ttl
+        {
+            return Ok(state.state);
         }
 
         if let Some(state) = self.read_disk_snapshot() {
@@ -204,14 +205,14 @@ fn fetch_transaction_state(
 ) -> anyhow::Result<TransactionState> {
     let html = fetch_transaction_document(transport, user_agent)?;
     let token = extract_ondemand_token(&html)?;
-    let ondemand_url = format!(
-        "https://abs.twimg.com/responsive-web/client-web/ondemand.s.{token}a.js"
-    );
+    let ondemand_url =
+        format!("https://abs.twimg.com/responsive-web/client-web/ondemand.s.{token}a.js");
     let ondemand_js = fetch_text(transport, "GET", &ondemand_url, vec![], None)?;
     let (row_index, key_byte_indices) = extract_indices(&ondemand_js)?;
     let key_bytes = extract_site_verification_key_bytes(&html)?;
     let frame_paths = extract_frame_paths(&html)?;
-    let animation_key = build_animation_key(&key_bytes, row_index, &key_byte_indices, &frame_paths)?;
+    let animation_key =
+        build_animation_key(&key_bytes, row_index, &key_byte_indices, &frame_paths)?;
     Ok(TransactionState {
         key_bytes,
         animation_key,
@@ -232,7 +233,13 @@ fn fetch_transaction_document(
     )?;
 
     if let Some(redirect_url) = extract_migration_redirect_url(&html) {
-        html = fetch_text(transport, "GET", &redirect_url, browser_headers.clone(), None)?;
+        html = fetch_text(
+            transport,
+            "GET",
+            &redirect_url,
+            browser_headers.clone(),
+            None,
+        )?;
     }
 
     if let Some(form) = extract_migration_form(&html)? {
@@ -396,7 +403,8 @@ fn build_animation_key(
     let selected_row_index = key_bytes
         .get(row_index)
         .copied()
-        .context("Missing row selection byte in verification key")? as usize
+        .context("Missing row selection byte in verification key")?
+        as usize
         % 16;
     let row = rows
         .get(selected_row_index)
@@ -500,11 +508,7 @@ fn solve(value: u16, min_val: f64, max_val: f64, rounding: bool) -> f64 {
 }
 
 fn odd_value(index: usize) -> f64 {
-    if index % 2 == 1 {
-        -1.0
-    } else {
-        0.0
-    }
+    if index % 2 == 1 { -1.0 } else { 0.0 }
 }
 
 fn interpolate(from_list: &[f64], to_list: &[f64], factor: f64) -> Vec<f64> {
@@ -635,8 +639,9 @@ fn extract_migration_redirect_url(html: &str) -> Option<String> {
 
 fn extract_migration_form(html: &str) -> anyhow::Result<Option<MigrationForm>> {
     let document = Html::parse_document(html);
-    let form_selector = Selector::parse(r#"form[name="f"], form[action="https://x.com/x/migrate"]"#)
-        .expect("valid selector");
+    let form_selector =
+        Selector::parse(r#"form[name="f"], form[action="https://x.com/x/migrate"]"#)
+            .expect("valid selector");
     let input_selector = Selector::parse("input").expect("valid selector");
     let Some(form) = document.select(&form_selector).next() else {
         return Ok(None);
@@ -716,6 +721,9 @@ mod tests {
     fn animation_key_matches_js_port_vector() {
         let row = vec![40, 80, 120, 10, 20, 30, 200, 64, 128, 192, 255];
         let key = animate_row(&row, 0.5).expect("animation");
-        assert_eq!(key, "19324b0d70a3d70a3d70808a3d70a3d70a408a3d70a3d70a40d70a3d70a3d70800");
+        assert_eq!(
+            key,
+            "19324b0d70a3d70a3d70808a3d70a3d70a408a3d70a3d70a40d70a3d70a3d70800"
+        );
     }
 }
