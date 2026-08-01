@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct FeatureOverrides {
@@ -35,7 +35,10 @@ pub fn refresh_features_cache() -> anyhow::Result<(PathBuf, serde_json::Value)> 
         fs::create_dir_all(parent)?;
     }
     let payload = to_json_value(&load_feature_overrides());
-    fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&payload)?))?;
+    fs::write(
+        &path,
+        format!("{}\n", serde_json::to_string_pretty(&payload)?),
+    )?;
     Ok((path, payload))
 }
 
@@ -446,9 +449,18 @@ pub fn build_article_field_toggles() -> Value {
 fn build_timeline_features() -> Value {
     let mut value = build_search_features();
     if let Some(map) = value.as_object_mut() {
-        map.insert("blue_business_profile_image_shape_enabled".to_owned(), Value::Bool(true));
-        map.insert("responsive_web_text_conversations_enabled".to_owned(), Value::Bool(false));
-        map.insert("tweetypie_unmention_optimization_enabled".to_owned(), Value::Bool(true));
+        map.insert(
+            "blue_business_profile_image_shape_enabled".to_owned(),
+            Value::Bool(true),
+        );
+        map.insert(
+            "responsive_web_text_conversations_enabled".to_owned(),
+            Value::Bool(false),
+        );
+        map.insert(
+            "tweetypie_unmention_optimization_enabled".to_owned(),
+            Value::Bool(true),
+        );
         map.insert("vibe_api_enabled".to_owned(), Value::Bool(true));
         map.insert(
             "responsive_web_twitter_blue_verified_badge_is_enabled".to_owned(),
@@ -483,7 +495,10 @@ fn apply_feature_overrides(set_name: &str, base: Value) -> Value {
 
 fn apply_bookmark_feature_overrides(set_name: &str, base: Value) -> Value {
     let mut base_map = base.as_object().cloned().unwrap_or_default();
-    let allowed = base_map.keys().cloned().collect::<std::collections::BTreeSet<_>>();
+    let allowed = base_map
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
     let overrides = load_feature_overrides();
     for (key, value) in overrides.global {
         if allowed.contains(&key) {
@@ -502,15 +517,15 @@ fn apply_bookmark_feature_overrides(set_name: &str, base: Value) -> Value {
 
 fn load_feature_overrides() -> FeatureOverrides {
     let mut merged = default_feature_overrides();
-    if let Ok(raw) = fs::read_to_string(features_path()) {
-        if let Ok(overrides) = serde_json::from_str::<FeatureOverrides>(&raw) {
-            merge_overrides(&mut merged, overrides);
-        }
+    if let Ok(raw) = fs::read_to_string(features_path())
+        && let Ok(overrides) = serde_json::from_str::<FeatureOverrides>(&raw)
+    {
+        merge_overrides(&mut merged, overrides);
     }
-    if let Ok(raw) = std::env::var("BIRD_FEATURES_JSON") {
-        if let Ok(overrides) = serde_json::from_str::<FeatureOverrides>(&raw) {
-            merge_overrides(&mut merged, overrides);
-        }
+    if let Ok(raw) = std::env::var("BIRD_FEATURES_JSON")
+        && let Ok(overrides) = serde_json::from_str::<FeatureOverrides>(&raw)
+    {
+        merge_overrides(&mut merged, overrides);
     }
     merged
 }
@@ -527,7 +542,10 @@ fn default_feature_overrides() -> FeatureOverrides {
         global: BTreeMap::from([
             ("responsive_web_grok_annotations_enabled".to_owned(), false),
             ("post_ctas_fetch_enabled".to_owned(), true),
-            ("responsive_web_graphql_exclude_directive_enabled".to_owned(), true),
+            (
+                "responsive_web_graphql_exclude_directive_enabled".to_owned(),
+                true,
+            ),
         ]),
         sets: BTreeMap::from([
             (
@@ -542,7 +560,10 @@ fn default_feature_overrides() -> FeatureOverrides {
                 BTreeMap::from([
                     ("blue_business_profile_image_shape_enabled".to_owned(), true),
                     ("tweetypie_unmention_optimization_enabled".to_owned(), true),
-                    ("responsive_web_text_conversations_enabled".to_owned(), false),
+                    (
+                        "responsive_web_text_conversations_enabled".to_owned(),
+                        false,
+                    ),
                     ("interactive_text_enabled".to_owned(), true),
                     ("vibe_api_enabled".to_owned(), true),
                     (
@@ -557,8 +578,14 @@ fn default_feature_overrides() -> FeatureOverrides {
 
 fn to_json_value(overrides: &FeatureOverrides) -> Value {
     let mut root = Map::new();
-    root.insert("global".to_owned(), serde_json::to_value(&overrides.global).unwrap_or(Value::Object(Map::new())));
-    root.insert("sets".to_owned(), serde_json::to_value(&overrides.sets).unwrap_or(Value::Object(Map::new())));
+    root.insert(
+        "global".to_owned(),
+        serde_json::to_value(&overrides.global).unwrap_or(Value::Object(Map::new())),
+    );
+    root.insert(
+        "sets".to_owned(),
+        serde_json::to_value(&overrides.sets).unwrap_or(Value::Object(Map::new())),
+    );
     Value::Object(root)
 }
 
@@ -575,7 +602,9 @@ mod tests {
 
         assert_eq!(features.len(), 39);
         assert_eq!(
-            features.get("post_ctas_fetch_enabled").and_then(Value::as_bool),
+            features
+                .get("post_ctas_fetch_enabled")
+                .and_then(Value::as_bool),
             Some(false)
         );
         assert_eq!(

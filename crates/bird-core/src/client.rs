@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Context;
 use rand::Rng;
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use url::form_urlencoded::Serializer;
 use uuid::Uuid;
 
@@ -21,13 +21,13 @@ use crate::parser::{
     normalize_quote_depth, parse_lists_from_instructions, parse_tweets_from_instructions,
     parse_users_from_instructions,
 };
-use crate::query_ids::{target_query_id_operations, RuntimeQueryIdStore};
+use crate::query_ids::{RuntimeQueryIdStore, target_query_id_operations};
 use crate::transaction_id::RuntimeTransactionIdStore;
 use crate::transport::{CurlTransport, HttpRequest, HttpTransport};
 use crate::types::{
     AboutProfile, BookmarkMutationResult, CurrentUser, FollowMutationResult, MediaUploadResult,
-    NewsItem, QueryIdSnapshot, TweetData, TweetMutationResult, TweetsPage,
-    TwitterClientOptions, TwitterCookies, TwitterList, TwitterUser, UsersPage,
+    NewsItem, QueryIdSnapshot, TweetData, TweetMutationResult, TweetsPage, TwitterClientOptions,
+    TwitterCookies, TwitterList, TwitterUser, UsersPage,
 };
 
 const TWITTER_API_BASE: &str = "https://x.com/i/api/graphql";
@@ -237,10 +237,14 @@ impl TwitterClient {
                             username: username.clone(),
                             name: name.unwrap_or(username),
                         };
-                        self.client_user_id.lock().ok().map(|mut slot| *slot = Some(user_id));
+                        if let Ok(mut slot) = self.client_user_id.lock() {
+                            *slot = Some(user_id);
+                        }
                         return Ok(user);
                     }
-                    last_error = Some(anyhow::anyhow!("Could not determine current user from response"));
+                    last_error = Some(anyhow::anyhow!(
+                        "Could not determine current user from response"
+                    ));
                 }
                 Ok(response) => {
                     last_error = Some(anyhow::anyhow!(
@@ -256,7 +260,10 @@ impl TwitterClient {
         let screen_name_re = &*SETTINGS_SCREEN_NAME_RE;
         let user_id_re = &*SETTINGS_USER_ID_RE;
         let name_re = &*SETTINGS_NAME_RE;
-        for url in ["https://x.com/settings/account", "https://twitter.com/settings/account"] {
+        for url in [
+            "https://x.com/settings/account",
+            "https://twitter.com/settings/account",
+        ] {
             match self.send_request(
                 "GET",
                 url,
@@ -281,7 +288,9 @@ impl TwitterClient {
                         .and_then(|capture| capture.get(1))
                         .map(|value| value.as_str().replace("\\\"", "\""));
                     if let (Some(username), Some(user_id)) = (username, user_id) {
-                        self.client_user_id.lock().ok().map(|mut slot| *slot = Some(user_id.clone()));
+                        if let Ok(mut slot) = self.client_user_id.lock() {
+                            *slot = Some(user_id.clone());
+                        }
                         return Ok(CurrentUser {
                             id: user_id,
                             username: username.clone(),
@@ -338,7 +347,14 @@ impl TwitterClient {
                 &self.likes_query_ids(),
                 "Likes",
                 &params,
-                &["data", "user", "result", "timeline", "timeline", "instructions"],
+                &[
+                    "data",
+                    "user",
+                    "result",
+                    "timeline",
+                    "timeline",
+                    "instructions",
+                ],
                 include_raw,
                 true,
             )?;
@@ -365,7 +381,10 @@ impl TwitterClient {
             next_cursor = cursor.clone();
         }
 
-        Ok(TweetsPage { tweets, next_cursor })
+        Ok(TweetsPage {
+            tweets,
+            next_cursor,
+        })
     }
 
     pub fn get_bookmarks(
@@ -453,14 +472,10 @@ impl TwitterClient {
                 .as_ref()
                 .map(|cursor| !seen_cursors.insert(cursor.clone()))
                 .unwrap_or(false);
-            let max_pages_reached = max_pages
-                .map(|max| pages_fetched >= max)
-                .unwrap_or(false);
-            if let Some(stop_cursor) = bookmark_stop_cursor(
-                page.cursor.as_deref(),
-                repeated_cursor,
-                max_pages_reached,
-            ) {
+            let max_pages_reached = max_pages.map(|max| pages_fetched >= max).unwrap_or(false);
+            if let Some(stop_cursor) =
+                bookmark_stop_cursor(page.cursor.as_deref(), repeated_cursor, max_pages_reached)
+            {
                 next_cursor = stop_cursor;
                 break;
             }
@@ -468,7 +483,10 @@ impl TwitterClient {
             next_cursor = cursor.clone();
         }
 
-        Ok(TweetsPage { tweets, next_cursor })
+        Ok(TweetsPage {
+            tweets,
+            next_cursor,
+        })
     }
 
     pub fn get_bookmark_folder_timeline(
@@ -530,7 +548,10 @@ impl TwitterClient {
             next_cursor = cursor.clone();
         }
 
-        Ok(TweetsPage { tweets, next_cursor })
+        Ok(TweetsPage {
+            tweets,
+            next_cursor,
+        })
     }
 
     pub fn get_following(
@@ -622,7 +643,8 @@ impl TwitterClient {
             }
 
             Err(RefreshableError {
-                message: last_error.unwrap_or_else(|| "Unknown error fetching account details".to_owned()),
+                message: last_error
+                    .unwrap_or_else(|| "Unknown error fetching account details".to_owned()),
                 needs_refresh: true,
             })
         })
@@ -631,7 +653,12 @@ impl TwitterClient {
 
     pub fn get_owned_lists(&self, count: usize) -> anyhow::Result<Vec<TwitterList>> {
         let user_id = self.client_user_id_value()?;
-        self.get_lists_for_user("ListOwnerships", &self.list_ownerships_query_ids(), &user_id, count)
+        self.get_lists_for_user(
+            "ListOwnerships",
+            &self.list_ownerships_query_ids(),
+            &user_id,
+            count,
+        )
     }
 
     pub fn get_list_timeline(
@@ -670,7 +697,13 @@ impl TwitterClient {
                 &self.list_timeline_query_ids(),
                 "ListLatestTweetsTimeline",
                 &params,
-                &["data", "list", "tweets_timeline", "timeline", "instructions"],
+                &[
+                    "data",
+                    "list",
+                    "tweets_timeline",
+                    "timeline",
+                    "instructions",
+                ],
                 include_raw,
                 false,
             )?;
@@ -697,7 +730,10 @@ impl TwitterClient {
             next_cursor = cursor.clone();
         }
 
-        Ok(TweetsPage { tweets, next_cursor })
+        Ok(TweetsPage {
+            tweets,
+            next_cursor,
+        })
     }
 
     pub fn get_news(
@@ -830,12 +866,17 @@ impl TwitterClient {
                     "queryId": query_id
                 }))
             };
-            let headers = self.headers_json_with_referer(&format!("https://x.com/i/status/{tweet_id}"));
+            let headers =
+                self.headers_json_with_referer(&format!("https://x.com/i/status/{tweet_id}"));
 
             let mut query_id = self.query_id(operation_name);
             let mut operation_url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}");
-            let mut response =
-                self.send_request("POST", &operation_url, headers.clone(), Some(body_for(&query_id)?))?;
+            let mut response = self.send_request(
+                "POST",
+                &operation_url,
+                headers.clone(),
+                Some(body_for(&query_id)?),
+            )?;
             if response.status == 404 {
                 let _ = self.refresh_query_ids();
                 query_id = self.query_id(operation_name);
@@ -918,10 +959,10 @@ impl TwitterClient {
     }
 
     fn ensure_client_user_id(&self) -> anyhow::Result<()> {
-        if let Ok(slot) = self.client_user_id.lock() {
-            if slot.is_some() {
-                return Ok(());
-            }
+        if let Ok(slot) = self.client_user_id.lock()
+            && slot.is_some()
+        {
+            return Ok(());
         }
         let user = self.get_current_user()?;
         if let Ok(mut slot) = self.client_user_id.lock() {
@@ -935,7 +976,10 @@ impl TwitterClient {
         errors: &[Value],
         variables: &Value,
     ) -> anyhow::Result<Option<TweetMutationResult>> {
-        if !errors.iter().any(|error| error.get("code").and_then(Value::as_i64) == Some(226)) {
+        if !errors
+            .iter()
+            .any(|error| error.get("code").and_then(Value::as_i64) == Some(226))
+        {
             return Ok(None);
         }
         let Some(input) = status_update_input_from_create_tweet_variables(variables) else {
@@ -1033,37 +1077,31 @@ impl TwitterClient {
             );
         }
         let init_data = init_response.json()?;
-        let media_id = first_string(&[
-            init_data.get("media_id_string"),
-            init_data.get("media_id"),
-        ])
-        .context("Media upload INIT did not return media_id")?;
+        let media_id = first_string(&[init_data.get("media_id_string"), init_data.get("media_id")])
+            .context("Media upload INIT did not return media_id")?;
 
         let chunk_size = 5 * 1024 * 1024;
-        let mut segment_index = 0usize;
-        for chunk in data.chunks(chunk_size) {
-            let (body, boundary) = multipart_form_data(
-                &[
-                    MultipartField::Text {
-                        name: "command",
-                        value: "APPEND".to_owned(),
-                    },
-                    MultipartField::Text {
-                        name: "media_id",
-                        value: media_id.clone(),
-                    },
-                    MultipartField::Text {
-                        name: "segment_index",
-                        value: segment_index.to_string(),
-                    },
-                    MultipartField::File {
-                        name: "media",
-                        filename: "media".to_owned(),
-                        content_type: mime_type.to_owned(),
-                        data: chunk.to_vec(),
-                    },
-                ],
-            );
+        for (segment_index, chunk) in data.chunks(chunk_size).enumerate() {
+            let (body, boundary) = multipart_form_data(&[
+                MultipartField::Text {
+                    name: "command",
+                    value: "APPEND".to_owned(),
+                },
+                MultipartField::Text {
+                    name: "media_id",
+                    value: media_id.clone(),
+                },
+                MultipartField::Text {
+                    name: "segment_index",
+                    value: segment_index.to_string(),
+                },
+                MultipartField::File {
+                    name: "media",
+                    filename: "media".to_owned(),
+                    content_type: mime_type.to_owned(),
+                    data: chunk.to_vec(),
+                },
+            ]);
             let response = self.send_request(
                 "POST",
                 TWITTER_UPLOAD_URL,
@@ -1071,9 +1109,12 @@ impl TwitterClient {
                 Some(body),
             )?;
             if !response.is_success() {
-                anyhow::bail!("HTTP {}: {}", response.status, truncate(&response.text(), 200));
+                anyhow::bail!(
+                    "HTTP {}: {}",
+                    response.status,
+                    truncate(&response.text(), 200)
+                );
             }
-            segment_index += 1;
         }
 
         let finalize_body = urlencoded_body(&[("command", "FINALIZE"), ("media_id", &media_id)]);
@@ -1098,15 +1139,17 @@ impl TwitterClient {
                 "POST",
                 TWITTER_MEDIA_METADATA_URL,
                 self.headers_json(),
-                Some(
-                    serde_json::to_vec(&json!({
-                        "media_id": media_id,
-                        "alt_text": { "text": alt }
-                    }))?,
-                ),
+                Some(serde_json::to_vec(&json!({
+                    "media_id": media_id,
+                    "alt_text": { "text": alt }
+                }))?),
             )?;
             if !response.is_success() {
-                anyhow::bail!("HTTP {}: {}", response.status, truncate(&response.text(), 200));
+                anyhow::bail!(
+                    "HTTP {}: {}",
+                    response.status,
+                    truncate(&response.text(), 200)
+                );
             }
         }
 
@@ -1143,8 +1186,16 @@ impl TwitterClient {
                 page_size.min(count.saturating_sub(users.len()))
             };
             let page = self
-                .fetch_users_page_graphql(user_id, page_count, cursor.clone(), operation_name, &query_ids)
-                .or_else(|_| self.fetch_users_page_rest(user_id, page_count, cursor.clone(), rest_action))?;
+                .fetch_users_page_graphql(
+                    user_id,
+                    page_count,
+                    cursor.clone(),
+                    operation_name,
+                    &query_ids,
+                )
+                .or_else(|_| {
+                    self.fetch_users_page_rest(user_id, page_count, cursor.clone(), rest_action)
+                })?;
             pages_fetched += 1;
             let mut added = 0usize;
             for user in page.users {
@@ -1232,7 +1283,8 @@ impl TwitterClient {
             }
 
             Err(RefreshableError {
-                message: last_error.unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
+                message: last_error
+                    .unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
                 needs_refresh: true,
             })
         })
@@ -1281,24 +1333,28 @@ impl TwitterClient {
                     .and_then(Value::as_array)
                     .map(Vec::as_slice);
 
-                if let Some(errors) = data.get("errors").and_then(Value::as_array) {
-                    if let Some(error) =
+                if let Some(errors) = data.get("errors").and_then(Value::as_array)
+                    && let Some(error) =
                         timeline_page_error(errors, instructions.is_some(), refresh_on_query_error)
-                    {
-                        needs_refresh |= error.needs_refresh;
-                        last_error = Some(error.message);
-                        continue;
-                    }
+                {
+                    needs_refresh |= error.needs_refresh;
+                    last_error = Some(error.message);
+                    continue;
                 }
 
                 return Ok(TweetTimelinePage {
-                    tweets: parse_tweets_from_instructions(instructions, self.quote_depth, include_raw),
+                    tweets: parse_tweets_from_instructions(
+                        instructions,
+                        self.quote_depth,
+                        include_raw,
+                    ),
                     cursor: extract_cursor_from_instructions(instructions, "Bottom"),
                 });
             }
 
             Err(RefreshableError {
-                message: last_error.unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
+                message: last_error
+                    .unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
                 needs_refresh,
             })
         })
@@ -1348,14 +1404,13 @@ impl TwitterClient {
                     .and_then(Value::as_array)
                     .map(Vec::as_slice);
 
-                if let Some(errors) = data.get("errors").and_then(Value::as_array) {
-                    if let Some(error) =
+                if let Some(errors) = data.get("errors").and_then(Value::as_array)
+                    && let Some(error) =
                         timeline_page_error(errors, instructions.is_some(), refresh_on_query_error)
-                    {
-                        needs_refresh |= error.needs_refresh;
-                        last_error = Some(error.message);
-                        continue;
-                    }
+                {
+                    needs_refresh |= error.needs_refresh;
+                    last_error = Some(error.message);
+                    continue;
                 }
                 if instructions.is_none() {
                     needs_refresh |= refresh_on_query_error;
@@ -1366,7 +1421,11 @@ impl TwitterClient {
                 }
 
                 let page = TweetTimelinePage {
-                    tweets: parse_tweets_from_instructions(instructions, self.quote_depth, include_raw),
+                    tweets: parse_tweets_from_instructions(
+                        instructions,
+                        self.quote_depth,
+                        include_raw,
+                    ),
                     cursor: extract_cursor_from_instructions(instructions, "Bottom"),
                 };
                 if page.tweets.is_empty() {
@@ -1381,7 +1440,8 @@ impl TwitterClient {
             }
 
             Err(RefreshableError {
-                message: last_error.unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
+                message: last_error
+                    .unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
                 needs_refresh,
             })
         })
@@ -1414,19 +1474,26 @@ impl TwitterClient {
 
                 for variables in [variables_with_count, variables_without_count] {
                     let params = encode_params(&[
-                        ("variables", serde_json::to_string(&variables).map_err(|error| RefreshableError {
-                            message: error.to_string(),
-                            needs_refresh: false,
-                        })?),
-                        ("features", serde_json::to_string(features).map_err(|error| RefreshableError {
-                            message: error.to_string(),
-                            needs_refresh: false,
-                        })?),
+                        (
+                            "variables",
+                            serde_json::to_string(&variables).map_err(|error| {
+                                RefreshableError {
+                                    message: error.to_string(),
+                                    needs_refresh: false,
+                                }
+                            })?,
+                        ),
+                        (
+                            "features",
+                            serde_json::to_string(features).map_err(|error| RefreshableError {
+                                message: error.to_string(),
+                                needs_refresh: false,
+                            })?,
+                        ),
                     ]);
                     let url =
                         format!("{TWITTER_API_BASE}/{query_id}/BookmarkFolderTimeline?{params}");
-                    let response =
-                        self.fetch_with_retry("GET", &url, self.headers_json(), None);
+                    let response = self.fetch_with_retry("GET", &url, self.headers_json(), None);
                     let Ok(response) = response else {
                         last_error = Some(response.err().unwrap().to_string());
                         continue;
@@ -1464,7 +1531,9 @@ impl TwitterClient {
                             }
                             if message.contains("Variable \"$cursor\"") && cursor.is_some() {
                                 return Err(RefreshableError {
-                                    message: "Bookmark folder pagination rejected the cursor parameter".to_owned(),
+                                    message:
+                                        "Bookmark folder pagination rejected the cursor parameter"
+                                            .to_owned(),
                                     needs_refresh: false,
                                 });
                             }
@@ -1474,14 +1543,19 @@ impl TwitterClient {
                     }
 
                     return Ok(TweetTimelinePage {
-                        tweets: parse_tweets_from_instructions(instructions, self.quote_depth, include_raw),
+                        tweets: parse_tweets_from_instructions(
+                            instructions,
+                            self.quote_depth,
+                            include_raw,
+                        ),
                         cursor: extract_cursor_from_instructions(instructions, "Bottom"),
                     });
                 }
             }
 
             Err(RefreshableError {
-                message: last_error.unwrap_or_else(|| "Unknown error fetching bookmark folder".to_owned()),
+                message: last_error
+                    .unwrap_or_else(|| "Unknown error fetching bookmark folder".to_owned()),
                 needs_refresh: true,
             })
         })
@@ -1590,7 +1664,8 @@ impl TwitterClient {
             }
 
             Err(RefreshableError {
-                message: last_error.unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
+                message: last_error
+                    .unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
                 needs_refresh: true,
             })
         })
@@ -1665,10 +1740,7 @@ impl TwitterClient {
             format!("https://x.com/i/api/1.1/friendships/{action}.json"),
             format!("https://api.twitter.com/1.1/friendships/{action}.json"),
         ];
-        let body = urlencoded_body(&[
-            ("user_id", user_id),
-            ("skip_status", "true"),
-        ]);
+        let body = urlencoded_body(&[("user_id", user_id), ("skip_status", "true")]);
         let mut last_error = None;
 
         for url in urls {
@@ -1680,53 +1752,51 @@ impl TwitterClient {
 
             if !response.is_success() {
                 let text = response.text();
-                if let Ok(data) = serde_json::from_str::<Value>(&text) {
-                    if let Some(error) = data
+                if let Ok(data) = serde_json::from_str::<Value>(&text)
+                    && let Some(error) = data
                         .get("errors")
                         .and_then(Value::as_array)
                         .and_then(|errors| errors.first())
-                    {
-                        match error.get("code").and_then(Value::as_i64) {
-                            Some(160) => {
-                                return Ok(FollowMutationResult {
-                                    success: true,
-                                    user_id: None,
-                                    username: None,
-                                    error: None,
-                                })
-                            }
-                            Some(162) => {
-                                return Ok(FollowMutationResult {
-                                    success: false,
-                                    user_id: None,
-                                    username: None,
-                                    error: Some(
-                                        "You have been blocked from following this account"
-                                            .to_owned(),
-                                    ),
-                                })
-                            }
-                            Some(108) => {
-                                return Ok(FollowMutationResult {
-                                    success: false,
-                                    user_id: None,
-                                    username: None,
-                                    error: Some("User not found".to_owned()),
-                                })
-                            }
-                            _ => {
-                                let message = error
-                                    .get("message")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("Unknown error");
-                                let code = error
-                                    .get("code")
-                                    .and_then(Value::as_i64)
-                                    .map(|code| format!(" (code {code})"))
-                                    .unwrap_or_default();
-                                last_error = Some(format!("{message}{code}"));
-                                continue;
-                            }
+                {
+                    match error.get("code").and_then(Value::as_i64) {
+                        Some(160) => {
+                            return Ok(FollowMutationResult {
+                                success: true,
+                                user_id: None,
+                                username: None,
+                                error: None,
+                            });
+                        }
+                        Some(162) => {
+                            return Ok(FollowMutationResult {
+                                success: false,
+                                user_id: None,
+                                username: None,
+                                error: Some(
+                                    "You have been blocked from following this account".to_owned(),
+                                ),
+                            });
+                        }
+                        Some(108) => {
+                            return Ok(FollowMutationResult {
+                                success: false,
+                                user_id: None,
+                                username: None,
+                                error: Some("User not found".to_owned()),
+                            });
+                        }
+                        _ => {
+                            let message = error
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Unknown error");
+                            let code = error
+                                .get("code")
+                                .and_then(Value::as_i64)
+                                .map(|code| format!(" (code {code})"))
+                                .unwrap_or_default();
+                            last_error = Some(format!("{message}{code}"));
+                            continue;
                         }
                     }
                 }
@@ -1760,7 +1830,11 @@ impl TwitterClient {
         })
     }
 
-    fn follow_via_graphql(&self, user_id: &str, follow: bool) -> anyhow::Result<FollowMutationResult> {
+    fn follow_via_graphql(
+        &self,
+        user_id: &str,
+        follow: bool,
+    ) -> anyhow::Result<FollowMutationResult> {
         let operation_name = if follow {
             "CreateFriendship"
         } else {
@@ -1826,7 +1900,10 @@ impl TwitterClient {
                     success: false,
                     user_id: None,
                     username: None,
-                    error: Some(last_error.unwrap_or_else(|| format!("Unknown error during {operation_name}"))),
+                    error: Some(
+                        last_error
+                            .unwrap_or_else(|| format!("Unknown error during {operation_name}")),
+                    ),
                 },
                 had_404,
             ))
@@ -1844,7 +1921,11 @@ impl TwitterClient {
         Ok(first_attempt)
     }
 
-    pub fn get_home_timeline(&self, count: usize, include_raw: bool) -> anyhow::Result<Vec<TweetData>> {
+    pub fn get_home_timeline(
+        &self,
+        count: usize,
+        include_raw: bool,
+    ) -> anyhow::Result<Vec<TweetData>> {
         self.fetch_home_timeline("HomeTimeline", count, include_raw)
     }
 
@@ -1900,7 +1981,10 @@ impl TwitterClient {
             cursor = page.next_cursor.clone();
             next_cursor = cursor.clone();
         }
-        Ok(TweetsPage { tweets, next_cursor })
+        Ok(TweetsPage {
+            tweets,
+            next_cursor,
+        })
     }
 
     pub fn get_tweet(&self, tweet_id: &str, include_raw: bool) -> anyhow::Result<TweetData> {
@@ -1919,7 +2003,8 @@ impl TwitterClient {
                 )
             })
             .context("Tweet not found in response")?;
-        map_tweet_result(&tweet_result, self.quote_depth, include_raw).context("Tweet not found in response")
+        map_tweet_result(&tweet_result, self.quote_depth, include_raw)
+            .context("Tweet not found in response")
     }
 
     pub fn get_replies(
@@ -1944,7 +2029,10 @@ impl TwitterClient {
         self.get_thread_like(tweet_id, include_raw, cursor, max_pages, page_delay, false)
     }
 
-    pub fn get_user_id_by_username(&self, username: &str) -> anyhow::Result<(String, String, Option<String>)> {
+    pub fn get_user_id_by_username(
+        &self,
+        username: &str,
+    ) -> anyhow::Result<(String, String, Option<String>)> {
         let clean = normalize_handle(username).context("Invalid username")?;
         let query_ids = [
             "xc8f1g7BYqr6VTzTbvNlGw",
@@ -2006,12 +2094,20 @@ impl TwitterClient {
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
             let username = first_string(&[
-                user_result.and_then(|value| value.get("legacy")).and_then(|value| value.get("screen_name")),
-                user_result.and_then(|value| value.get("core")).and_then(|value| value.get("screen_name")),
+                user_result
+                    .and_then(|value| value.get("legacy"))
+                    .and_then(|value| value.get("screen_name")),
+                user_result
+                    .and_then(|value| value.get("core"))
+                    .and_then(|value| value.get("screen_name")),
             ]);
             let name = first_string(&[
-                user_result.and_then(|value| value.get("legacy")).and_then(|value| value.get("name")),
-                user_result.and_then(|value| value.get("core")).and_then(|value| value.get("name")),
+                user_result
+                    .and_then(|value| value.get("legacy"))
+                    .and_then(|value| value.get("name")),
+                user_result
+                    .and_then(|value| value.get("core"))
+                    .and_then(|value| value.get("name")),
             ]);
             if let (Some(user_id), Some(username)) = (user_id, username) {
                 return Ok((user_id, username, name));
@@ -2019,8 +2115,14 @@ impl TwitterClient {
         }
 
         let urls = [
-            format!("https://x.com/i/api/1.1/users/show.json?screen_name={}", urlencoding(&clean)),
-            format!("https://api.twitter.com/1.1/users/show.json?screen_name={}", urlencoding(&clean)),
+            format!(
+                "https://x.com/i/api/1.1/users/show.json?screen_name={}",
+                urlencoding(&clean)
+            ),
+            format!(
+                "https://api.twitter.com/1.1/users/show.json?screen_name={}",
+                urlencoding(&clean)
+            ),
         ];
         for url in urls {
             let response = self.send_request("GET", &url, self.headers_json(), None)?;
@@ -2031,7 +2133,8 @@ impl TwitterClient {
                 continue;
             }
             let data = response.json()?;
-            let user_id = first_string(&[data.get("id_str"), data.get("id")]).context("Could not parse user ID from response")?;
+            let user_id = first_string(&[data.get("id_str"), data.get("id")])
+                .context("Could not parse user ID from response")?;
             return Ok((
                 user_id,
                 first_string(&[data.get("screen_name")]).unwrap_or(clean),
@@ -2052,7 +2155,7 @@ impl TwitterClient {
     ) -> anyhow::Result<TweetsPage> {
         let page_size = 20usize;
         let hard_max_pages = 10usize;
-        let computed_max_pages = ((count + page_size - 1) / page_size).max(1);
+        let computed_max_pages = count.div_ceil(page_size).max(1);
         let effective_max_pages = max_pages.unwrap_or(computed_max_pages).min(hard_max_pages);
         let mut seen = std::collections::BTreeSet::new();
         let mut tweets = Vec::new();
@@ -2096,7 +2199,10 @@ impl TwitterClient {
             cursor = page.next_cursor.clone();
             next_cursor = cursor.clone();
         }
-        Ok(TweetsPage { tweets, next_cursor })
+        Ok(TweetsPage {
+            tweets,
+            next_cursor,
+        })
     }
 
     fn fetch_home_timeline(
@@ -2128,14 +2234,16 @@ impl TwitterClient {
                 ("variables", serde_json::to_string(&variables)?),
                 ("features", serde_json::to_string(&features)?),
             ]);
-            let data = self.fetch_graphql_json(&query_ids, operation, "GET", &params, None, true)?;
+            let data =
+                self.fetch_graphql_json(&query_ids, operation, "GET", &params, None, true)?;
             let instructions = data
                 .get("home")
                 .and_then(|value| value.get("home_timeline_urt"))
                 .and_then(|value| value.get("instructions"))
                 .and_then(Value::as_array)
                 .map(Vec::as_slice);
-            let page_tweets = parse_tweets_from_instructions(instructions, self.quote_depth, include_raw);
+            let page_tweets =
+                parse_tweets_from_instructions(instructions, self.quote_depth, include_raw);
             let next_cursor = extract_cursor_from_instructions(instructions, "Bottom");
             let mut added = 0usize;
             for tweet in page_tweets {
@@ -2237,7 +2345,10 @@ impl TwitterClient {
                     "responsive_web_twitter_article_tweet_consumption_enabled",
                     Value::Bool(true),
                 ),
-                ("freedom_of_speech_not_reach_fetch_enabled", Value::Bool(true)),
+                (
+                    "freedom_of_speech_not_reach_fetch_enabled",
+                    Value::Bool(true),
+                ),
                 ("standardized_nudges_misinfo", Value::Bool(true)),
                 (
                     "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled",
@@ -2299,7 +2410,11 @@ impl TwitterClient {
         response: crate::transport::HttpResponse,
     ) -> anyhow::Result<Value> {
         if !response.is_success() {
-            anyhow::bail!("HTTP {}: {}", response.status, truncate(&response.text(), 200));
+            anyhow::bail!(
+                "HTTP {}: {}",
+                response.status,
+                truncate(&response.text(), 200)
+            );
         }
         let data = response.json()?;
         if let Some(errors) = data.get("errors").and_then(Value::as_array) {
@@ -2347,7 +2462,10 @@ impl TwitterClient {
         let field_toggles = json!({ "withArticlePlainText": false });
         let params = encode_params(&[
             ("variables", serde_json::to_string(&variables)?),
-            ("features", serde_json::to_string(&build_user_tweets_features())?),
+            (
+                "features",
+                serde_json::to_string(&build_user_tweets_features())?,
+            ),
             ("fieldToggles", serde_json::to_string(&field_toggles)?),
         ]);
         let data = self.fetch_graphql_json(&query_ids, "UserTweets", "GET", &params, None, true)?;
@@ -2385,7 +2503,8 @@ impl TwitterClient {
                 .and_then(|value| value.get("instructions"))
                 .and_then(Value::as_array)
                 .map(Vec::as_slice);
-            let parsed = parse_tweets_from_instructions(instructions, self.quote_depth, include_raw);
+            let parsed =
+                parse_tweets_from_instructions(instructions, self.quote_depth, include_raw);
             if root_id.is_none() {
                 root_id = parsed
                     .iter()
@@ -2404,7 +2523,12 @@ impl TwitterClient {
                     .into_iter()
                     .filter(|tweet| tweet.conversation_id.as_deref() == Some(root_id.as_str()))
                     .collect::<Vec<_>>();
-                filtered.sort_by_key(|tweet| tweet.created_at.as_ref().map(|created_at| created_at.to_owned()));
+                filtered.sort_by_key(|tweet| {
+                    tweet
+                        .created_at
+                        .as_ref()
+                        .map(|created_at| created_at.to_owned())
+                });
                 filtered
             };
             let mut added = 0usize;
@@ -2428,7 +2552,10 @@ impl TwitterClient {
                 thread::sleep(page_delay);
             }
         };
-        Ok(TweetsPage { tweets, next_cursor })
+        Ok(TweetsPage {
+            tweets,
+            next_cursor,
+        })
     }
 
     fn fetch_graphql_json(
@@ -2445,7 +2572,8 @@ impl TwitterClient {
             let mut saw_refreshable_miss = false;
             for query_id in query_ids {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}?{params}");
-                let response = self.send_request(method, &url, self.headers_json(), body.clone())?;
+                let response =
+                    self.send_request(method, &url, self.headers_json(), body.clone())?;
                 if response.status == 404 {
                     saw_refreshable_miss = true;
                     continue;
@@ -2501,7 +2629,10 @@ impl TwitterClient {
         mut headers: Vec<(String, String)>,
         body: Option<Vec<u8>>,
     ) -> anyhow::Result<crate::transport::HttpResponse> {
-        if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("x-client-transaction-id")) {
+        if !headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("x-client-transaction-id"))
+        {
             let transaction_id = self
                 .transaction_ids
                 .generate(&self.transport, &self.user_agent, method, url)
@@ -2538,7 +2669,8 @@ impl TwitterClient {
                 .and_then(|value| value.parse::<u64>().ok())
                 .map(Duration::from_secs);
             let jitter = Duration::from_millis(rand::random::<u64>() % 500);
-            let backoff = retry_after.unwrap_or_else(|| base_delay * 2u32.pow(attempt as u32) + jitter);
+            let backoff =
+                retry_after.unwrap_or_else(|| base_delay * 2u32.pow(attempt as u32) + jitter);
             thread::sleep(backoff);
         }
         self.send_request(method, url, headers, body)
@@ -2586,12 +2718,18 @@ impl TwitterClient {
             ("accept".into(), "*/*".into()),
             ("accept-language".into(), "en-US,en;q=0.9".into()),
             ("authorization".into(), format!("Bearer {BEARER_TOKEN}")),
-            ("x-csrf-token".into(), self.cookies.ct0.clone().unwrap_or_default()),
+            (
+                "x-csrf-token".into(),
+                self.cookies.ct0.clone().unwrap_or_default(),
+            ),
             ("x-twitter-auth-type".into(), "OAuth2Session".into()),
             ("x-twitter-active-user".into(), "yes".into()),
             ("x-twitter-client-language".into(), "en".into()),
             ("x-client-uuid".into(), self.client_uuid.clone()),
-            ("x-twitter-client-deviceid".into(), self.client_device_id.clone()),
+            (
+                "x-twitter-client-deviceid".into(),
+                self.client_device_id.clone(),
+            ),
             ("cookie".into(), self.cookie_header()),
             ("user-agent".into(), self.user_agent.clone()),
             (
@@ -2609,10 +2747,10 @@ impl TwitterClient {
             ("origin".into(), "https://x.com".into()),
             ("referer".into(), "https://x.com/".into()),
         ];
-        if let Ok(slot) = self.client_user_id.lock() {
-            if let Some(user_id) = slot.as_ref() {
-                headers.push(("x-twitter-client-user-id".into(), user_id.clone()));
-            }
+        if let Ok(slot) = self.client_user_id.lock()
+            && let Some(user_id) = slot.as_ref()
+        {
+            headers.push(("x-twitter-client-user-id".into(), user_id.clone()));
         }
         headers
     }
@@ -2628,17 +2766,21 @@ impl TwitterClient {
     }
 
     fn query_id(&self, operation: &str) -> String {
-        self.query_ids
-            .get_query_id(operation)
-            .unwrap_or_default()
+        self.query_ids.get_query_id(operation).unwrap_or_default()
     }
 
     fn home_timeline_query_ids(&self) -> Vec<String> {
-        unique(vec![self.query_id("HomeTimeline"), "edseUwk9sP5Phz__9TIRnA".into()])
+        unique(vec![
+            self.query_id("HomeTimeline"),
+            "edseUwk9sP5Phz__9TIRnA".into(),
+        ])
     }
 
     fn home_latest_timeline_query_ids(&self) -> Vec<String> {
-        unique(vec![self.query_id("HomeLatestTimeline"), "iOEZpOdfekFsxSlPQCQtPg".into()])
+        unique(vec![
+            self.query_id("HomeLatestTimeline"),
+            "iOEZpOdfekFsxSlPQCQtPg".into(),
+        ])
     }
 
     fn search_timeline_query_ids(&self) -> Vec<String> {
@@ -2659,7 +2801,10 @@ impl TwitterClient {
     }
 
     fn user_tweets_query_ids(&self) -> Vec<String> {
-        unique(vec![self.query_id("UserTweets"), "Wms1GvIiHXAPBaCr9KblaA".into()])
+        unique(vec![
+            self.query_id("UserTweets"),
+            "Wms1GvIiHXAPBaCr9KblaA".into(),
+        ])
     }
 
     fn follow_query_ids(&self, follow: bool) -> Vec<String> {
@@ -2678,7 +2823,10 @@ impl TwitterClient {
     }
 
     fn likes_query_ids(&self) -> Vec<String> {
-        unique(vec![self.query_id("Likes"), "JR2gceKucIKcVNB_9JkhsA".into()])
+        unique(vec![
+            self.query_id("Likes"),
+            "JR2gceKucIKcVNB_9JkhsA".into(),
+        ])
     }
 
     fn bookmarks_query_ids(&self) -> Vec<String> {
@@ -2698,15 +2846,24 @@ impl TwitterClient {
     }
 
     fn following_query_ids(&self) -> Vec<String> {
-        unique(vec![self.query_id("Following"), "BEkNpEt5pNETESoqMsTEGA".into()])
+        unique(vec![
+            self.query_id("Following"),
+            "BEkNpEt5pNETESoqMsTEGA".into(),
+        ])
     }
 
     fn followers_query_ids(&self) -> Vec<String> {
-        unique(vec![self.query_id("Followers"), "kuFUYP9eV1FPoEy4N-pi7w".into()])
+        unique(vec![
+            self.query_id("Followers"),
+            "kuFUYP9eV1FPoEy4N-pi7w".into(),
+        ])
     }
 
     fn list_ownerships_query_ids(&self) -> Vec<String> {
-        unique(vec![self.query_id("ListOwnerships"), "wQcOSjSQ8NtgxIwvYl1lMg".into()])
+        unique(vec![
+            self.query_id("ListOwnerships"),
+            "wQcOSjSQ8NtgxIwvYl1lMg".into(),
+        ])
     }
 
     fn list_timeline_query_ids(&self) -> Vec<String> {
@@ -2717,7 +2874,10 @@ impl TwitterClient {
     }
 
     fn about_account_query_ids(&self) -> Vec<String> {
-        unique(vec![self.query_id("AboutAccountQuery"), "zs_jFPFT78rBpXv9Z3U2YQ".into()])
+        unique(vec![
+            self.query_id("AboutAccountQuery"),
+            "zs_jFPFT78rBpXv9Z3U2YQ".into(),
+        ])
     }
 
     fn generic_timeline_query_ids(&self) -> Vec<String> {
@@ -2799,15 +2959,12 @@ fn vget_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
 }
 
 fn first_string(values: &[Option<&Value>]) -> Option<String> {
-    values
-        .iter()
-        .flatten()
-        .find_map(|value| {
-            value
-                .as_str()
-                .map(ToOwned::to_owned)
-                .or_else(|| value.as_u64().map(|value| value.to_string()))
-        })
+    values.iter().flatten().find_map(|value| {
+        value
+            .as_str()
+            .map(ToOwned::to_owned)
+            .or_else(|| value.as_u64().map(|value| value.to_string()))
+    })
 }
 
 fn encode_params(entries: &[(&str, String)]) -> String {
@@ -2883,10 +3040,7 @@ fn unique(values: Vec<String>) -> Vec<String> {
 fn urlencoding(value: &str) -> String {
     let mut serializer = Serializer::new(String::new());
     serializer.append_pair("value", value);
-    serializer
-        .finish()
-        .trim_start_matches("value=")
-        .to_owned()
+    serializer.finish().trim_start_matches("value=").to_owned()
 }
 
 #[derive(Debug, Clone)]
@@ -3040,12 +3194,17 @@ fn parse_news_items_from_timeline(
             let Some(content) = entry.get("content") else {
                 continue;
             };
-            if let Some(item_content) = content.get("itemContent") {
-                if let Some(item) =
-                    parse_news_item_from_content(item_content, entry_id, source, &mut seen, ai_only, include_raw)
-                {
-                    items.push(item);
-                }
+            if let Some(item_content) = content.get("itemContent")
+                && let Some(item) = parse_news_item_from_content(
+                    item_content,
+                    entry_id,
+                    source,
+                    &mut seen,
+                    ai_only,
+                    include_raw,
+                )
+            {
+                items.push(item);
             }
             if let Some(content_items) = content.get("items").and_then(Value::as_array) {
                 for item in content_items {
@@ -3055,17 +3214,17 @@ fn parse_news_items_from_timeline(
                     let item_content = item
                         .get("itemContent")
                         .or_else(|| item.get("item").and_then(|value| value.get("itemContent")));
-                    if let Some(item_content) = item_content {
-                        if let Some(item) = parse_news_item_from_content(
+                    if let Some(item_content) = item_content
+                        && let Some(item) = parse_news_item_from_content(
                             item_content,
                             entry_id,
                             source,
                             &mut seen,
                             ai_only,
                             include_raw,
-                        ) {
-                            items.push(item);
-                        }
+                        )
+                    {
+                        items.push(item);
                     }
                 }
             }
@@ -3121,7 +3280,11 @@ fn parse_news_item_from_content(
     let mut time_ago = None;
     let mut post_count = None;
 
-    for part in social_context.split('·').map(str::trim).filter(|part| !part.is_empty()) {
+    for part in social_context
+        .split('·')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
         if part.contains("ago") {
             time_ago = Some(part.to_owned());
         } else if let Some(count) = parse_post_count(part) {
@@ -3141,10 +3304,9 @@ fn parse_news_item_from_content(
     if let Some(domain_context) = trend_metadata
         .and_then(|value| value.get("domain_context"))
         .and_then(Value::as_str)
+        && matches!(category.as_deref(), Some("Trending") | Some("News"))
     {
-        if matches!(category.as_deref(), Some("Trending") | Some("News")) {
-            category = Some(domain_context.to_owned());
-        }
+        category = Some(domain_context.to_owned());
     }
     if is_ai_news {
         category = Some(match category {
@@ -3272,9 +3434,7 @@ fn multipart_form_data(fields: &[MultipartField]) -> (Vec<u8>, String) {
                     )
                     .as_bytes(),
                 );
-                body.extend_from_slice(
-                    format!("Content-Type: {content_type}\r\n\r\n").as_bytes(),
-                );
+                body.extend_from_slice(format!("Content-Type: {content_type}\r\n\r\n").as_bytes());
                 body.extend_from_slice(data);
                 body.extend_from_slice(b"\r\n");
             }
@@ -3316,7 +3476,11 @@ fn maybe_wait_for_media_processing(
         );
         let response = client.send_request("GET", &status_url, client.base_headers(), None)?;
         if !response.is_success() {
-            anyhow::bail!("HTTP {}: {}", response.status, truncate(&response.text(), 200));
+            anyhow::bail!(
+                "HTTP {}: {}",
+                response.status,
+                truncate(&response.text(), 200)
+            );
         }
         let data = response.json()?;
         let Some(next_state) = data.get("processing_info").and_then(parse_processing_info) else {
@@ -3362,10 +3526,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        bookmark_page_needs_empty_verification, bookmark_stop_cursor, bookmarks_variables,
-        media_category_for_mime, multipart_form_data,
-        status_update_input_from_create_tweet_variables, timeline_page_error, MultipartField,
-        TweetTimelinePage,
+        MultipartField, TweetTimelinePage, bookmark_page_needs_empty_verification,
+        bookmark_stop_cursor, bookmarks_variables, media_category_for_mime, multipart_form_data,
+        status_update_input_from_create_tweet_variables, timeline_page_error,
     };
 
     #[test]
@@ -3426,10 +3589,7 @@ mod tests {
 
     #[test]
     fn repeated_bookmark_cursor_never_becomes_a_resume_cursor() {
-        assert_eq!(
-            bookmark_stop_cursor(Some("loop"), true, true),
-            Some(None)
-        );
+        assert_eq!(bookmark_stop_cursor(Some("loop"), true, true), Some(None));
         assert_eq!(
             bookmark_stop_cursor(Some("next"), false, true),
             Some(Some("next".to_owned()))
@@ -3493,11 +3653,7 @@ mod tests {
     fn timeline_accepts_instructions_with_advisory_graphql_errors() {
         let errors = json!([{ "message": "Query: Unspecified" }]);
 
-        let result = timeline_page_error(
-            errors.as_array().expect("errors"),
-            true,
-            true,
-        );
+        let result = timeline_page_error(errors.as_array().expect("errors"), true, true);
 
         assert!(result.is_none());
     }
@@ -3506,12 +3662,8 @@ mod tests {
     fn timeline_retries_refreshable_errors_without_instructions() {
         let errors = json!([{ "message": "Query: Unspecified" }]);
 
-        let result = timeline_page_error(
-            errors.as_array().expect("errors"),
-            false,
-            true,
-        )
-        .expect("timeline error");
+        let result = timeline_page_error(errors.as_array().expect("errors"), false, true)
+            .expect("timeline error");
 
         assert_eq!(result.message, "Query: Unspecified");
         assert!(result.needs_refresh);

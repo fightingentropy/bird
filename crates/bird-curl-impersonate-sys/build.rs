@@ -22,6 +22,7 @@ struct DistfileEntry {
     filename: String,
     url: String,
     sha256: String,
+    archive_root: String,
     extracted_dir: String,
 }
 
@@ -244,6 +245,7 @@ fn cache_is_ready(install_root: &Path, success_marker: &Path) -> bool {
         && install_root.join("lib/libcurl-impersonate.a").is_file()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rebuild_cache(
     cache_dir: &Path,
     source_root: &Path,
@@ -342,6 +344,7 @@ fn seed_distfiles(distfiles_dir: &Path, manifest: &DistfileManifest, work_dir: &
                 digest
             );
         }
+        inspect_distfile_archive(&source_path, &distfile.archive_root);
 
         let target_path = work_dir.join(&distfile.filename);
         if target_path.exists() {
@@ -349,6 +352,118 @@ fn seed_distfiles(distfiles_dir: &Path, manifest: &DistfileManifest, work_dir: &
         }
         symlink_or_copy(&source_path, &target_path);
     }
+}
+
+fn inspect_distfile_archive(path: &Path, expected_root: &str) {
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let listing = if filename.ends_with(".zip") {
+        run_output_command(
+            Command::new("unzip").arg("-Z1").arg(path),
+            "inspect vendored zip entries",
+        )
+    } else {
+        run_output_command(
+            Command::new("tar").arg("-tf").arg(path),
+            "inspect vendored tar entries",
+        )
+    };
+
+    let mut count = 0usize;
+    for entry in listing.lines() {
+        count += 1;
+        validate_archive_path(entry, expected_root)
+            .unwrap_or_else(|error| panic!("unsafe archive entry in {}: {error}", path.display()));
+    }
+    if count == 0 {
+        panic!("vendored archive {} is empty", path.display());
+    }
+
+    if filename.ends_with(".zip") {
+        let verbose = run_output_command(
+            Command::new("unzip").arg("-Z").arg("-l").arg(path),
+            "inspect vendored zip entry types",
+        );
+        for line in verbose.lines() {
+            if line.starts_with('l') {
+                panic!("vendored zip {} contains a symbolic link", path.display());
+            }
+        }
+        return;
+    }
+
+    let verbose = run_output_command(
+        Command::new("tar").arg("-tvf").arg(path),
+        "inspect vendored tar entry types",
+    );
+    for line in verbose.lines() {
+        match line.chars().next() {
+            Some('-' | 'd') => {}
+            Some('l') => validate_tar_symlink(line, expected_root).unwrap_or_else(|error| {
+                panic!("unsafe symbolic link in {}: {error}", path.display())
+            }),
+            Some(kind) => panic!(
+                "vendored archive {} contains unsupported entry type {kind}",
+                path.display()
+            ),
+            None => panic!(
+                "vendored archive {} has an empty verbose entry",
+                path.display()
+            ),
+        }
+    }
+}
+
+fn validate_archive_path(entry: &str, expected_root: &str) -> Result<(), String> {
+    if entry.is_empty()
+        || entry.starts_with('/')
+        || entry.contains('\\')
+        || entry.chars().any(char::is_control)
+    {
+        return Err(format!("invalid path {entry:?}"));
+    }
+    let mut components = entry.split('/').filter(|component| !component.is_empty());
+    if components.next() != Some(expected_root) {
+        return Err(format!(
+            "entry is outside expected root {expected_root:?}: {entry:?}"
+        ));
+    }
+    if components.any(|component| component == "." || component == "..") {
+        return Err(format!("entry contains path traversal: {entry:?}"));
+    }
+    Ok(())
+}
+
+fn validate_tar_symlink(line: &str, expected_root: &str) -> Result<(), String> {
+    let (metadata, target) = line
+        .split_once(" -> ")
+        .ok_or_else(|| "could not parse symbolic-link metadata".to_owned())?;
+    let link = metadata
+        .split_whitespace()
+        .last()
+        .ok_or_else(|| "symbolic link has no path".to_owned())?;
+    validate_archive_path(link, expected_root)?;
+    if target.starts_with('/') || target.contains('\\') || target.chars().any(char::is_control) {
+        return Err(format!("symbolic link has unsafe target {target:?}"));
+    }
+
+    let mut depth = link.split('/').filter(|part| !part.is_empty()).count();
+    depth = depth.saturating_sub(1);
+    for component in target.split('/').filter(|part| !part.is_empty()) {
+        match component {
+            "." => {}
+            ".." if depth > 1 => depth -= 1,
+            ".." => {
+                return Err(format!(
+                    "symbolic link escapes archive root: {link} -> {target}"
+                ));
+            }
+            _ => depth += 1,
+        }
+    }
+    Ok(())
 }
 
 fn sha256_file(path: &Path) -> String {

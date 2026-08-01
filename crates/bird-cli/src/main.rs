@@ -1,17 +1,19 @@
 use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Once;
 use std::time::Duration;
 
+use anyhow::Context;
 use bird_core::{
-    AboutProfile, CurrentUser, CurlTransport, NewsItem, QueryIdSnapshot,
-    ResolveCredentialsOptions, RuntimeQueryIdStore, TweetData, TwitterClient,
-    TransportInfo, TwitterClientOptions, TwitterCookies, TwitterList, TwitterUser, UsersPage,
-    build_cookie_header_from_cookies,
-    refresh_features_cache, resolve_credentials, target_query_id_operations,
+    AboutProfile, CurlTransport, CurrentUser, NewsItem, QueryIdSnapshot, ResolveCredentialsOptions,
+    RuntimeQueryIdStore, TransportInfo, TweetData, TwitterClient, TwitterClientOptions,
+    TwitterCookies, TwitterList, TwitterUser, UsersPage, build_cookie_header_from_cookies,
+    redact_sensitive_text, refresh_features_cache, resolve_credentials, target_query_id_operations,
 };
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use serde::Deserialize;
@@ -109,10 +111,25 @@ struct Cli {
 
 #[derive(Debug, Clone, Parser, Default)]
 struct GlobalOptions {
-    #[arg(long, global = true)]
-    auth_token: Option<String>,
-    #[arg(long, global = true)]
-    ct0: Option<String>,
+    #[arg(
+        long = "credentials-stdin",
+        action = ArgAction::SetTrue,
+        conflicts_with = "credentials_fd",
+        global = true
+    )]
+    credentials_stdin: bool,
+    #[arg(
+        long = "credentials-fd",
+        conflicts_with = "credentials_stdin",
+        global = true
+    )]
+    credentials_fd: Option<u32>,
+    #[arg(
+        long = "trust-project-config",
+        action = ArgAction::SetTrue,
+        global = true
+    )]
+    trust_project_config: bool,
     #[arg(long = "chrome-profile", global = true)]
     chrome_profile: Option<String>,
     #[arg(long = "chrome-profile-dir", global = true)]
@@ -404,6 +421,24 @@ struct ConfigFile {
     quote_depth: Option<usize>,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CredentialInput {
+    #[serde(alias = "auth_token")]
+    auth_token: String,
+    ct0: String,
+}
+
+impl std::fmt::Debug for CredentialInput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CredentialInput")
+            .field("auth_token", &"[REDACTED]")
+            .field("ct0", &"[REDACTED]")
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum CookieSourceConfig {
@@ -436,13 +471,19 @@ impl ConfigFile {
 
 struct CliContext {
     config: ConfigFile,
+    input_credentials: Option<CredentialInput>,
+    credential_source: Option<String>,
 }
 
 impl CliContext {
-    fn load() -> Self {
-        Self {
-            config: load_config(),
-        }
+    fn load(global: &GlobalOptions) -> anyhow::Result<Self> {
+        let (input_credentials, credential_source) = read_credential_input(global)?;
+        warn_if_proxy_enabled();
+        Ok(Self {
+            config: load_config(global.trust_project_config),
+            input_credentials,
+            credential_source,
+        })
     }
 
     fn resolve_timeout(&self, global: &GlobalOptions) -> Option<Duration> {
@@ -496,7 +537,11 @@ impl CliContext {
         }
 
         if let Some(cookie_source) = self.config.cookie_source.clone() {
-            return cookie_source.into_vec().into_iter().map(Into::into).collect();
+            return cookie_source
+                .into_vec()
+                .into_iter()
+                .map(Into::into)
+                .collect();
         }
 
         vec![
@@ -506,22 +551,36 @@ impl CliContext {
         ]
     }
 
-    fn resolve_credentials(&self, global: &GlobalOptions) -> anyhow::Result<bird_core::ResolvedCredentials> {
+    fn resolve_credentials(
+        &self,
+        global: &GlobalOptions,
+    ) -> anyhow::Result<bird_core::ResolvedCredentials> {
         let transport = transport_from_env();
         resolve_credentials(
             ResolveCredentialsOptions {
-                auth_token: global.auth_token.clone(),
-                ct0: global.ct0.clone(),
+                auth_token: self
+                    .input_credentials
+                    .as_ref()
+                    .map(|credentials| credentials.auth_token.clone()),
+                ct0: self
+                    .input_credentials
+                    .as_ref()
+                    .map(|credentials| credentials.ct0.clone()),
                 cookie_source: self.resolve_cookie_sources(global),
                 chrome_profile: self.resolve_chrome_profile(global),
                 firefox_profile: self.resolve_firefox_profile(global),
                 cookie_timeout: self.resolve_cookie_timeout(global),
+                credential_source: self.credential_source.clone(),
             },
             &transport,
         )
     }
 
-    fn build_client(&self, global: &GlobalOptions, cookies: TwitterCookies) -> anyhow::Result<TwitterClient> {
+    fn build_client(
+        &self,
+        global: &GlobalOptions,
+        cookies: TwitterCookies,
+    ) -> anyhow::Result<TwitterClient> {
         TwitterClient::new(TwitterClientOptions {
             cookies,
             user_agent: None,
@@ -533,14 +592,14 @@ impl CliContext {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("[err] {}", error.message);
+        eprintln!("[err] {}", redact_sensitive_text(&error.message));
         process::exit(error.code);
     }
 }
 
 fn run() -> CliResult<()> {
     let cli = Cli::parse_from(normalize_args(env::args_os()));
-    let context = CliContext::load();
+    let context = CliContext::load(&cli.global)?;
 
     match cli.command {
         Commands::Check => run_check(&context, &cli.global),
@@ -792,7 +851,14 @@ fn run() -> CliResult<()> {
             count,
             json,
             json_full,
-        } => run_mentions(&context, &cli.global, user.as_deref(), count, json, json_full),
+        } => run_mentions(
+            &context,
+            &cli.global,
+            user.as_deref(),
+            count,
+            json,
+            json_full,
+        ),
         Commands::UserTweets {
             handle,
             count,
@@ -829,11 +895,9 @@ fn run_transport(json: bool) -> CliResult<()> {
         return Ok(());
     }
 
-    Err(CliError::runtime(
-        info.error
-            .clone()
-            .unwrap_or_else(|| "invalid transport configuration".to_owned()),
-    ))
+    Err(CliError::runtime(info.error.clone().unwrap_or_else(|| {
+        "invalid transport configuration".to_owned()
+    })))
 }
 
 fn print_transport_info(info: &TransportInfo) {
@@ -859,13 +923,13 @@ fn run_check(context: &CliContext, global: &GlobalOptions) -> CliResult<()> {
 
     println!("[info] Credential check");
     println!("{}", "-".repeat(40));
-    if let Some(auth_token) = cookies.auth_token.as_deref() {
-        println!("[ok] auth_token: {}...", preview_secret(auth_token));
+    if cookies.auth_token.is_some() {
+        println!("[ok] auth_token: [REDACTED]");
     } else {
         println!("[err] auth_token: not found");
     }
-    if let Some(ct0) = cookies.ct0.as_deref() {
-        println!("[ok] ct0: {}...", preview_secret(ct0));
+    if cookies.ct0.is_some() {
+        println!("[ok] ct0: [REDACTED]");
     } else {
         println!("[err] ct0: not found");
     }
@@ -885,7 +949,7 @@ fn run_check(context: &CliContext, global: &GlobalOptions) -> CliResult<()> {
         println!("\n[err] Missing credentials. Options:");
         println!("  1. Login to x.com in Safari/Chrome/Firefox");
         println!("  2. Set AUTH_TOKEN and CT0 environment variables");
-        println!("  3. Use --auth-token and --ct0 flags");
+        println!("  3. Pass JSON through --credentials-stdin or an inherited --credentials-fd");
         Err(CliError::runtime("Missing required credentials"))
     }
 }
@@ -1058,14 +1122,20 @@ fn run_likes(
         return Err(CliError::usage("--max-pages requires --all or --cursor."));
     }
     if !use_pagination && count == 0 {
-        return Err(CliError::usage("Invalid --count. Expected a positive integer."));
+        return Err(CliError::usage(
+            "Invalid --count. Expected a positive integer.",
+        ));
     }
 
     let resolved = context.resolve_credentials(global)?;
     print_warnings(&resolved.warnings);
     ensure_credentials(&resolved.cookies)?;
     let client = context.build_client(global, resolved.cookies)?;
-    let limit = if use_pagination { usize::MAX / 4 } else { count };
+    let limit = if use_pagination {
+        usize::MAX / 4
+    } else {
+        count
+    };
     let page = client.get_likes(limit, json_full, search.cursor.clone(), search.max_pages)?;
     print_tweets_result(
         &page,
@@ -1090,7 +1160,9 @@ fn run_user_list(
         return Err(CliError::usage("--max-pages requires --all."));
     }
     if count == 0 {
-        return Err(CliError::usage("Invalid --count. Expected a positive integer."));
+        return Err(CliError::usage(
+            "Invalid --count. Expected a positive integer.",
+        ));
     }
 
     let resolved = context.resolve_credentials(global)?;
@@ -1159,6 +1231,7 @@ struct BookmarkArgs {
     sort_chronological: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_bookmarks(
     context: &CliContext,
     global: &GlobalOptions,
@@ -1175,7 +1248,9 @@ fn run_bookmarks(
         return Err(CliError::usage("--max-pages requires --all or --cursor."));
     }
     if !use_pagination && count == 0 {
-        return Err(CliError::usage("Invalid --count. Expected a positive integer."));
+        return Err(CliError::usage(
+            "Invalid --count. Expected a positive integer.",
+        ));
     }
 
     let parsed_folder_id = match folder_id {
@@ -1200,7 +1275,11 @@ fn run_bookmarks(
     print_warnings(&resolved.warnings);
     ensure_credentials(&resolved.cookies)?;
     let client = context.build_client(global, resolved.cookies)?;
-    let limit = if use_pagination { usize::MAX / 4 } else { count };
+    let limit = if use_pagination {
+        usize::MAX / 4
+    } else {
+        count
+    };
     let result = if let Some(folder_id) = parsed_folder_id.as_deref() {
         client.get_bookmark_folder_timeline(
             folder_id,
@@ -1218,14 +1297,17 @@ fn run_bookmarks(
         "No bookmarks found."
     };
     if result.tweets.is_empty() {
-        print_tweets_result(&result, json_output || json_full, use_pagination, empty_message);
+        print_tweets_result(
+            &result,
+            json_output || json_full,
+            use_pagination,
+            empty_message,
+        );
         return Ok(());
     }
 
-    let should_attempt_expand = args.expand_root_only
-        || args.author_chain
-        || args.author_only
-        || args.full_chain_only;
+    let should_attempt_expand =
+        args.expand_root_only || args.author_chain || args.author_only || args.full_chain_only;
     let should_fetch_thread = should_attempt_expand || args.thread_meta;
     let mut expanded_results = Vec::new();
     let mut thread_cache: HashMap<String, Vec<TweetData>> = HashMap::new();
@@ -1260,19 +1342,19 @@ fn run_bookmarks(
             }
         }
 
-        if args.include_parent {
-            if let Some(parent_id) = bookmark.in_reply_to_status_id.as_deref() {
-                let already_included = output_tweets.iter().any(|tweet| tweet.id == parent_id);
-                if !already_included {
-                    if let Some(parent) = thread_tweets
-                        .as_ref()
-                        .and_then(|tweets| tweets.iter().find(|tweet| tweet.id == parent_id))
-                        .cloned()
-                    {
-                        expanded_results.push(parent);
-                    } else if let Ok(parent) = client.get_tweet(parent_id, json_full) {
-                        expanded_results.push(parent);
-                    }
+        if args.include_parent
+            && let Some(parent_id) = bookmark.in_reply_to_status_id.as_deref()
+        {
+            let already_included = output_tweets.iter().any(|tweet| tweet.id == parent_id);
+            if !already_included {
+                if let Some(parent) = thread_tweets
+                    .as_ref()
+                    .and_then(|tweets| tweets.iter().find(|tweet| tweet.id == parent_id))
+                    .cloned()
+                {
+                    expanded_results.push(parent);
+                } else if let Ok(parent) = client.get_tweet(parent_id, json_full) {
+                    expanded_results.push(parent);
                 }
             }
         }
@@ -1324,7 +1406,9 @@ fn run_lists(
     json_output: bool,
 ) -> CliResult<()> {
     if count == 0 {
-        return Err(CliError::usage("Invalid --count. Expected a positive integer."));
+        return Err(CliError::usage(
+            "Invalid --count. Expected a positive integer.",
+        ));
     }
     let resolved = context.resolve_credentials(global)?;
     print_warnings(&resolved.warnings);
@@ -1372,14 +1456,20 @@ fn run_list_timeline(
     })?;
     let use_pagination = search.all || search.cursor.is_some() || search.max_pages.is_some();
     if !use_pagination && count == 0 {
-        return Err(CliError::usage("Invalid --count. Expected a positive integer."));
+        return Err(CliError::usage(
+            "Invalid --count. Expected a positive integer.",
+        ));
     }
 
     let resolved = context.resolve_credentials(global)?;
     print_warnings(&resolved.warnings);
     ensure_credentials(&resolved.cookies)?;
     let client = context.build_client(global, resolved.cookies)?;
-    let limit = if use_pagination { usize::MAX / 4 } else { count };
+    let limit = if use_pagination {
+        usize::MAX / 4
+    } else {
+        count
+    };
     let page = client.get_list_timeline(
         &list_id,
         limit,
@@ -1408,7 +1498,9 @@ fn run_news(
         return Err(CliError::usage("--count must be a positive number"));
     }
     if args.tweets_per_item == 0 {
-        return Err(CliError::usage("--tweets-per-item must be a positive number"));
+        return Err(CliError::usage(
+            "--tweets-per-item must be a positive number",
+        ));
     }
 
     let resolved = context.resolve_credentials(global)?;
@@ -1474,7 +1566,9 @@ fn run_home(
     json_full: bool,
 ) -> CliResult<()> {
     if count == 0 {
-        return Err(CliError::usage("Invalid --count. Expected a positive integer."));
+        return Err(CliError::usage(
+            "Invalid --count. Expected a positive integer.",
+        ));
     }
     let resolved = context.resolve_credentials(global)?;
     print_warnings(&resolved.warnings);
@@ -1511,7 +1605,12 @@ fn run_read(
         println!("{}", to_pretty_json(&tweet)?);
         return Ok(());
     }
-    print_tweets(&[tweet.clone()], false, "Tweet not found.", false);
+    print_tweets(
+        std::slice::from_ref(&tweet),
+        false,
+        "Tweet not found.",
+        false,
+    );
     println!("{}", format_stats_line(&tweet));
     Ok(())
 }
@@ -1576,7 +1675,12 @@ fn run_thread_like(
         ThreadMode::Replies => "No replies found.",
         ThreadMode::Thread => "No thread tweets found.",
     };
-    print_tweets_result(&page, json_output || json_full, use_pagination, empty_message);
+    print_tweets_result(
+        &page,
+        json_output || json_full,
+        use_pagination,
+        empty_message,
+    );
     Ok(())
 }
 
@@ -1602,7 +1706,9 @@ fn run_search(
         return Err(CliError::usage("--max-pages requires --all or --cursor."));
     }
     if !use_pagination && count == 0 {
-        return Err(CliError::usage("Invalid --count. Expected a positive integer."));
+        return Err(CliError::usage(
+            "Invalid --count. Expected a positive integer.",
+        ));
     }
     let resolved = context.resolve_credentials(global)?;
     print_warnings(&resolved.warnings);
@@ -1619,7 +1725,12 @@ fn run_search(
     } else {
         client.search(query, count, json_full, None, None)?
     };
-    print_tweets_result(&page, json_output || json_full, use_pagination, "No tweets found.");
+    print_tweets_result(
+        &page,
+        json_output || json_full,
+        use_pagination,
+        "No tweets found.",
+    );
     Ok(())
 }
 
@@ -1632,7 +1743,9 @@ fn run_mentions(
     json_full: bool,
 ) -> CliResult<()> {
     if count == 0 {
-        return Err(CliError::usage("Invalid --count. Expected a positive integer."));
+        return Err(CliError::usage(
+            "Invalid --count. Expected a positive integer.",
+        ));
     }
     let resolved = context.resolve_credentials(global)?;
     print_warnings(&resolved.warnings);
@@ -1677,7 +1790,9 @@ fn run_user_tweets(
 ) -> CliResult<()> {
     validate_positive_opt(args.max_pages, "--max-pages")?;
     if count == 0 {
-        return Err(CliError::usage("Invalid --count. Expected a positive integer."));
+        return Err(CliError::usage(
+            "Invalid --count. Expected a positive integer.",
+        ));
     }
     let page_size = 20usize;
     let hard_max_pages = 10usize;
@@ -1805,7 +1920,7 @@ fn print_users(users: &[TwitterUser]) {
             println!("  {}", truncate_text(description, 100));
         }
         if let Some(followers) = user.followers_count {
-            println!("  [info] {} followers", followers.to_string());
+            println!("  [info] {} followers", followers);
         }
         println!("{}", "─".repeat(50));
     }
@@ -1822,10 +1937,7 @@ fn print_lists(lists: &[TwitterList]) {
         if let Some(description) = list.description.as_deref() {
             println!("  {}", truncate_text(description, 100));
         }
-        println!(
-            "  [info] {} members",
-            list.member_count.unwrap_or(0)
-        );
+        println!("  [info] {} members", list.member_count.unwrap_or(0));
         if let Some(owner) = list.owner.as_ref() {
             println!("  Owner: @{}", owner.username);
         }
@@ -1869,13 +1981,17 @@ fn print_news_items(items: &[NewsItem], json_output: bool, tweet_limit: Option<u
         if let Some(url) = item.url.as_deref() {
             println!("  url: {url}");
         }
-        if let Some(tweets) = item.tweets.as_ref() {
-            if !tweets.is_empty() {
-                println!("  Related tweets:");
-                let limit = tweet_limit.unwrap_or(tweets.len());
-                for tweet in tweets.iter().take(limit) {
-                    println!("    @{}: {}", tweet.author.username, truncate_text(&tweet.text, 100));
-                }
+        if let Some(tweets) = item.tweets.as_ref()
+            && !tweets.is_empty()
+        {
+            println!("  Related tweets:");
+            let limit = tweet_limit.unwrap_or(tweets.len());
+            for tweet in tweets.iter().take(limit) {
+                println!(
+                    "    @{}: {}",
+                    tweet.author.username,
+                    truncate_text(&tweet.text, 100)
+                );
             }
         }
         println!("{}", "─".repeat(50));
@@ -2017,7 +2133,11 @@ fn filter_full_chain(
         current = parent.clone();
     }
 
-    add_descendants(&mut chain_ids, &replies_by_parent, &[bookmarked_tweet.id.clone()]);
+    add_descendants(
+        &mut chain_ids,
+        &replies_by_parent,
+        std::slice::from_ref(&bookmarked_tweet.id),
+    );
     if include_ancestor_branches {
         for ancestor_id in ancestor_ids {
             add_descendants(&mut chain_ids, &replies_by_parent, &[ancestor_id]);
@@ -2072,7 +2192,8 @@ fn add_thread_metadata(mut tweet: TweetData, all_conversation_tweets: &[TweetDat
     tweet.thread_position = Some(thread_position.to_owned());
     tweet.has_self_replies = Some(has_self_replies);
     tweet.thread_root_id = Some(
-        tweet.conversation_id
+        tweet
+            .conversation_id
             .clone()
             .unwrap_or_else(|| tweet.id.clone()),
     );
@@ -2093,18 +2214,15 @@ fn unique_tweets(tweets: Vec<TweetData>) -> Vec<TweetData> {
 fn tweet_sort_key(tweet: &TweetData) -> (i32, u32, u32, u32, u32, u32, String) {
     let (year, month, day, hour, minute, second) =
         parse_created_at(tweet.created_at.as_deref()).unwrap_or((0, 0, 0, 0, 0, 0));
-    (
-        year,
-        month,
-        day,
-        hour,
-        minute,
-        second,
-        tweet.id.clone(),
-    )
+    (year, month, day, hour, minute, second, tweet.id.clone())
 }
 
-fn print_tweets_result(page: &bird_core::TweetsPage, json_output: bool, use_pagination: bool, empty_message: &str) {
+fn print_tweets_result(
+    page: &bird_core::TweetsPage,
+    json_output: bool,
+    use_pagination: bool,
+    empty_message: &str,
+) {
     if json_output && use_pagination {
         println!(
             "{}",
@@ -2119,7 +2237,12 @@ fn print_tweets_result(page: &bird_core::TweetsPage, json_output: bool, use_pagi
     print_tweets(&page.tweets, json_output, empty_message, true);
 }
 
-fn print_tweets(tweets: &[TweetData], json_output: bool, empty_message: &str, show_separator: bool) {
+fn print_tweets(
+    tweets: &[TweetData],
+    json_output: bool,
+    empty_message: &str,
+    show_separator: bool,
+) {
     if json_output {
         println!(
             "{}",
@@ -2234,8 +2357,9 @@ fn load_media(global: &GlobalOptions) -> CliResult<Vec<MediaSpec>> {
                 "Unsupported media type for {path}. Supported: jpg, jpeg, png, webp, gif, mp4, mov"
             ))
         })?;
-        let data = fs::read(path)
-            .map_err(|error| CliError::runtime(format!("Failed to read media file {path}: {error}")))?;
+        let data = fs::read(path).map_err(|error| {
+            CliError::runtime(format!("Failed to read media file {path}: {error}"))
+        })?;
         specs.push(MediaSpec {
             data,
             mime: mime.to_owned(),
@@ -2260,7 +2384,10 @@ fn load_media(global: &GlobalOptions) -> CliResult<Vec<MediaSpec>> {
     Ok(specs)
 }
 
-fn upload_media_if_any(client: &TwitterClient, media: &[MediaSpec]) -> CliResult<Option<Vec<String>>> {
+fn upload_media_if_any(
+    client: &TwitterClient,
+    media: &[MediaSpec],
+) -> CliResult<Option<Vec<String>>> {
     if media.is_empty() {
         return Ok(None);
     }
@@ -2304,13 +2431,9 @@ fn detect_mime(path: &str) -> Option<&'static str> {
     None
 }
 
-fn preview_secret(value: &str) -> String {
-    value.chars().take(10).collect()
-}
-
 fn print_warnings(warnings: &[String]) {
     for warning in warnings {
-        eprintln!("[warn] {warning}");
+        eprintln!("[warn] {}", redact_sensitive_text(warning));
     }
 }
 
@@ -2331,7 +2454,25 @@ fn validate_positive_opt(value: Option<usize>, flag_name: &str) -> CliResult<()>
 }
 
 fn transport_from_env() -> CurlTransport {
-    CurlTransport::new(env::var("TWITTER_PROXY").ok().filter(|value| !value.trim().is_empty()))
+    CurlTransport::new(
+        env::var("TWITTER_PROXY")
+            .ok()
+            .filter(|value| !value.trim().is_empty()),
+    )
+}
+
+fn warn_if_proxy_enabled() {
+    static PROXY_WARNING: Once = Once::new();
+    if env::var("TWITTER_PROXY")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        PROXY_WARNING.call_once(|| {
+            eprintln!(
+                "[warn] TWITTER_PROXY is enabled. The proxy receives authenticated X traffic and can observe session metadata and content."
+            );
+        });
+    }
 }
 
 fn first_some<T>(values: impl IntoIterator<Item = Option<T>>) -> Option<T> {
@@ -2339,7 +2480,9 @@ fn first_some<T>(values: impl IntoIterator<Item = Option<T>>) -> Option<T> {
 }
 
 fn duration_from_first(values: impl IntoIterator<Item = Option<u64>>) -> Option<Duration> {
-    first_some(values).filter(|value| *value > 0).map(Duration::from_millis)
+    first_some(values)
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
 }
 
 fn to_pretty_json<T: serde::Serialize>(value: &T) -> CliResult<String> {
@@ -2356,14 +2499,28 @@ fn env_u64(key: &str) -> Option<u64> {
         .and_then(|value| value.parse::<u64>().ok())
 }
 
-fn load_config() -> ConfigFile {
+fn load_config(trust_project_config: bool) -> ConfigFile {
     let global = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config/bird/config.json5");
     let local = env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join(".birdrc.json5");
-    read_config_file(&global).merge(read_config_file(&local))
+    load_config_paths(&global, &local, trust_project_config)
+}
+
+fn load_config_paths(global: &Path, local: &Path, trust_project_config: bool) -> ConfigFile {
+    let config = read_config_file(global);
+    if trust_project_config {
+        return config.merge(read_config_file(local));
+    }
+    if local.is_file() {
+        eprintln!(
+            "[warn] Ignoring untrusted project config at {}. Re-run with --trust-project-config to load it.",
+            local.display()
+        );
+    }
+    config
 }
 
 fn read_config_file(path: &Path) -> ConfigFile {
@@ -2380,6 +2537,59 @@ fn read_config_file(path: &Path) -> ConfigFile {
             ConfigFile::default()
         }
     }
+}
+
+fn read_credential_input(
+    global: &GlobalOptions,
+) -> anyhow::Result<(Option<CredentialInput>, Option<String>)> {
+    const MAX_CREDENTIAL_BYTES: u64 = 16 * 1024;
+    let (mut reader, source): (Option<Box<dyn Read>>, Option<String>) = if global.credentials_stdin
+    {
+        (
+            Some(Box::new(io::stdin())),
+            Some("standard input".to_owned()),
+        )
+    } else if let Some(fd) = global.credentials_fd {
+        #[cfg(unix)]
+        {
+            let path = PathBuf::from(format!("/dev/fd/{fd}"));
+            (
+                Some(Box::new(File::open(&path).map_err(|error| {
+                    anyhow::anyhow!("failed to open inherited credential fd {fd}: {error}")
+                })?)),
+                Some(format!("inherited file descriptor {fd}")),
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            anyhow::bail!("--credentials-fd is supported only on Unix platforms");
+        }
+    } else {
+        (None, None)
+    };
+
+    let Some(reader) = reader.as_mut() else {
+        return Ok((None, None));
+    };
+    let mut raw = String::new();
+    reader
+        .take(MAX_CREDENTIAL_BYTES + 1)
+        .read_to_string(&mut raw)
+        .context("failed to read secure credential input")?;
+    if raw.len() as u64 > MAX_CREDENTIAL_BYTES {
+        anyhow::bail!("credential input exceeds the 16 KiB safety limit");
+    }
+    let credentials = parse_credential_input(&raw)?;
+    Ok((Some(credentials), source))
+}
+
+fn parse_credential_input(raw: &str) -> anyhow::Result<CredentialInput> {
+    let credentials = serde_json::from_str::<CredentialInput>(raw)
+        .context("credential input must be JSON with authToken/auth_token and ct0 strings")?;
+    if credentials.auth_token.trim().is_empty() || credentials.ct0.trim().is_empty() {
+        anyhow::bail!("credential input values must not be empty");
+    }
+    Ok(credentials)
 }
 
 fn count_feature_overrides(value: &serde_json::Value) -> usize {
@@ -2564,15 +2774,15 @@ fn normalize_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
 
     let remaining = iter.collect::<Vec<_>>();
     let first_positional = first_positional_index(&remaining);
-    if let Some(index) = first_positional {
-        if let Some(value) = remaining[index].to_str() {
-            if !KNOWN_COMMANDS.contains(&value) && !value.starts_with('-') {
-                normalized.extend_from_slice(&remaining[..index]);
-                normalized.push(OsString::from("read"));
-                normalized.extend_from_slice(&remaining[index..]);
-                return normalized;
-            }
-        }
+    if let Some(index) = first_positional
+        && let Some(value) = remaining[index].to_str()
+        && !KNOWN_COMMANDS.contains(&value)
+        && !value.starts_with('-')
+    {
+        normalized.extend_from_slice(&remaining[..index]);
+        normalized.push(OsString::from("read"));
+        normalized.extend_from_slice(&remaining[index..]);
+        return normalized;
     }
 
     normalized.extend(remaining);
@@ -2609,8 +2819,7 @@ fn first_positional_index(args: &[OsString]) -> Option<usize> {
 fn consumes_next_global_option(value: &str) -> bool {
     matches!(
         value,
-        "--auth-token"
-            | "--ct0"
+        "--credentials-fd"
             | "--chrome-profile"
             | "--chrome-profile-dir"
             | "--firefox-profile"
@@ -2632,5 +2841,50 @@ fn rebuild_cookie_header(cookies: &TwitterCookies) -> Option<String> {
             Some(ct0.clone()),
         )),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, load_config_paths, parse_credential_input};
+    use clap::Parser;
+
+    #[test]
+    fn raw_secret_flags_are_rejected() {
+        for flag in ["--auth-token", "--ct0"] {
+            let result = Cli::try_parse_from(["bird", flag, "secret", "check"]);
+            assert!(result.is_err(), "{flag} must stay disabled");
+        }
+        assert!(Cli::try_parse_from(["bird", "--credentials-fd", "9", "check"]).is_ok());
+    }
+
+    #[test]
+    fn credential_json_parses_without_echoing_secret_on_errors() {
+        let input = parse_credential_input(r#"{"authToken":"auth-secret","ct0":"csrf-secret"}"#)
+            .expect("valid input");
+        assert_eq!(input.auth_token, "auth-secret");
+        assert_eq!(input.ct0, "csrf-secret");
+
+        let error = parse_credential_input(r#"{"authToken":"auth-secret","bad":true}"#)
+            .expect_err("invalid input")
+            .to_string();
+        assert!(!error.contains("auth-secret"));
+    }
+
+    #[test]
+    fn project_config_is_ignored_until_explicitly_trusted() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let global = temp.path().join("global.json5");
+        let local = temp.path().join(".birdrc.json5");
+        std::fs::write(&global, "{ timeoutMs: 1000 }").expect("write global");
+        std::fs::write(&local, "{ timeoutMs: 1, quoteDepth: 9 }").expect("write local");
+
+        let untrusted = load_config_paths(&global, &local, false);
+        assert_eq!(untrusted.timeout_ms, Some(1000));
+        assert_eq!(untrusted.quote_depth, None);
+
+        let trusted = load_config_paths(&global, &local, true);
+        assert_eq!(trusted.timeout_ms, Some(1));
+        assert_eq!(trusted.quote_depth, Some(9));
     }
 }

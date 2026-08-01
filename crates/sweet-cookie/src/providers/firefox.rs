@@ -103,7 +103,11 @@ fn read_firefox_sqlite_db(
             name,
             value,
             domain: Some(host.trim_start_matches('.').to_owned()),
-            path: Some(if path.is_empty() { "/".to_owned() } else { path }),
+            path: Some(if path.is_empty() {
+                "/".to_owned()
+            } else {
+                path
+            }),
             url: None,
             expires,
             secure: is_secure == 1,
@@ -121,16 +125,16 @@ fn read_firefox_sqlite_db(
 }
 
 fn resolve_firefox_cookies_db(profile: Option<&str>) -> Option<std::path::PathBuf> {
-    if let Some(profile) = profile {
-        if looks_like_path(profile) {
-            let path = expand_path(profile);
-            if path.is_file() {
-                return Some(path);
-            }
-            let candidate = path.join("cookies.sqlite");
-            if candidate.exists() {
-                return Some(candidate);
-            }
+    if let Some(profile) = profile
+        && looks_like_path(profile)
+    {
+        let path = expand_path(profile);
+        if path.is_file() {
+            return Some(path);
+        }
+        let candidate = path.join("cookies.sqlite");
+        if candidate.exists() {
+            return Some(candidate);
         }
     }
 
