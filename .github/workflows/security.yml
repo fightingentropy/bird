@@ -19,7 +19,7 @@ jobs:
   vendor-integrity:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify Vendored Hashes, Archive Entries, and SBOM
         run: python3 scripts/vendor-supply-chain.py --check-sbom
 
