@@ -11,7 +11,7 @@
   "documentDescribes": [
     "SPDXRef-Application-bird"
   ],
-  "documentNamespace": "https://github.com/fightingentropy/bird/sbom/v0.1.4/7a832ff1e06e662b1a84e992c725a1b184ad391255e6a94c996bac492eb389b7",
+  "documentNamespace": "https://github.com/fightingentropy/bird/sbom/v0.1.4/c3a311ec09bf8cf409b51f976bd681784f3265560ced90258075313e7fdd2e3c",
   "hasExtractedLicensingInfos": [
     {
       "extractedText": "BoringSSL contains ISC-style and historical OpenSSL/SSLeay terms; see LICENSE in the pinned BoringSSL source archive.",
@@ -85,11 +85,11 @@
       "versionInfo": "1.1.4"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-anstream-0.6.21",
+      "SPDXID": "SPDXRef-Cargo-anstream-1.0.0",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "43d5b281e737544384e969a5ccad3f1cdd24b48086a0fc1b2a5262a26b8f4f4a"
+          "checksumValue": "824a212faf96e9acacdbd09febd34438f8f711fb84e09a8916013cd7815ca28d"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -97,7 +97,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/anstream@0.6.21",
+          "referenceLocator": "pkg:cargo/anstream@1.0.0",
           "referenceType": "purl"
         }
       ],
@@ -105,14 +105,14 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "anstream",
-      "versionInfo": "0.6.21"
+      "versionInfo": "1.0.0"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-anstyle-1.0.13",
+      "SPDXID": "SPDXRef-Cargo-anstyle-1.0.14",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
+          "checksumValue": "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -120,7 +120,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/anstyle@1.0.13",
+          "referenceLocator": "pkg:cargo/anstyle@1.0.14",
           "referenceType": "purl"
         }
       ],
@@ -128,14 +128,14 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "anstyle",
-      "versionInfo": "1.0.13"
+      "versionInfo": "1.0.14"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-anstyle-parse-0.2.7",
+      "SPDXID": "SPDXRef-Cargo-anstyle-parse-1.0.0",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "4e7644824f0aa2c7b9384579234ef10eb7efb6a0deb83f9630a49594dd9c15c2"
+          "checksumValue": "52ce7f38b242319f7cabaa6813055467063ecdc9d355bbb4ce0c68908cd8130e"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -143,7 +143,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/anstyle-parse@0.2.7",
+          "referenceLocator": "pkg:cargo/anstyle-parse@1.0.0",
           "referenceType": "purl"
         }
       ],
@@ -151,7 +151,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "anstyle-parse",
-      "versionInfo": "0.2.7"
+      "versionInfo": "1.0.0"
     },
     {
       "SPDXID": "SPDXRef-Cargo-anstyle-query-1.1.5",
@@ -826,11 +826,11 @@
       "versionInfo": "0.4.4"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-clap-4.5.60",
+      "SPDXID": "SPDXRef-Cargo-clap-4.6.4",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "2797f34da339ce31042b27d23607e051786132987f595b02ba4f6a6dffb7030a"
+          "checksumValue": "d91e0c145792ef73a6ad36d27c75ac09f1832222a3c209689d90f534685ee5b7"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -838,7 +838,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/clap@4.5.60",
+          "referenceLocator": "pkg:cargo/clap@4.6.4",
           "referenceType": "purl"
         }
       ],
@@ -846,14 +846,14 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "clap",
-      "versionInfo": "4.5.60"
+      "versionInfo": "4.6.4"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-clap-builder-4.5.60",
+      "SPDXID": "SPDXRef-Cargo-clap-builder-4.6.2",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "24a241312cea5059b13574bb9b3861cabf758b879c15190b37b6d6fd63ab6876"
+          "checksumValue": "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -861,7 +861,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/clap_builder@4.5.60",
+          "referenceLocator": "pkg:cargo/clap_builder@4.6.2",
           "referenceType": "purl"
         }
       ],
@@ -869,14 +869,14 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "clap_builder",
-      "versionInfo": "4.5.60"
+      "versionInfo": "4.6.2"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-clap-derive-4.5.55",
+      "SPDXID": "SPDXRef-Cargo-clap-derive-4.6.4",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "a92793da1a46a5f2a02a6f4c46c6496b28c43638adea8306fcb0caa1634f24e5"
+          "checksumValue": "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -884,7 +884,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/clap_derive@4.5.55",
+          "referenceLocator": "pkg:cargo/clap_derive@4.6.4",
           "referenceType": "purl"
         }
       ],
@@ -892,7 +892,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "clap_derive",
-      "versionInfo": "4.5.55"
+      "versionInfo": "4.6.4"
     },
     {
       "SPDXID": "SPDXRef-Cargo-clap-lex-1.0.0",
@@ -1125,11 +1125,11 @@
       "versionInfo": "0.7.0"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-curl-0.4.49",
+      "SPDXID": "SPDXRef-Cargo-curl-0.4.50",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "79fc3b6dd0b87ba36e565715bf9a2ced221311db47bd18011676f24a6066edbc"
+          "checksumValue": "3a45ee8994e5307cb4c60cfc1c20bf7263ffb771ddc135c9f768a14bcbc15b09"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -1137,7 +1137,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/curl@0.4.49",
+          "referenceLocator": "pkg:cargo/curl@0.4.50",
           "referenceType": "purl"
         }
       ],
@@ -1145,14 +1145,14 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "curl",
-      "versionInfo": "0.4.49"
+      "versionInfo": "0.4.50"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-curl-sys-0.4.85-curl-8.18.0",
+      "SPDXID": "SPDXRef-Cargo-curl-sys-0.4.90-curl-8.21.0",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "c0efa6142b5ecc05f6d3eaa39e6af4888b9d3939273fb592c92b7088a8cf3fdb"
+          "checksumValue": "97799a0d220bfb3361e0fe4936966ff8c4b24d65c3f06dfc70d7b680b44e7897"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -1160,7 +1160,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/curl-sys@0.4.85+curl-8.18.0",
+          "referenceLocator": "pkg:cargo/curl-sys@0.4.90+curl-8.21.0",
           "referenceType": "purl"
         }
       ],
@@ -1168,7 +1168,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "curl-sys",
-      "versionInfo": "0.4.85+curl-8.18.0"
+      "versionInfo": "0.4.90+curl-8.21.0"
     },
     {
       "SPDXID": "SPDXRef-Cargo-derive-more-2.1.1",
@@ -4184,11 +4184,11 @@
       "versionInfo": "1.0.27"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-serde-1.0.228",
+      "SPDXID": "SPDXRef-Cargo-serde-1.0.229",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
+          "checksumValue": "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -4196,7 +4196,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/serde@1.0.228",
+          "referenceLocator": "pkg:cargo/serde@1.0.229",
           "referenceType": "purl"
         }
       ],
@@ -4204,14 +4204,14 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "serde",
-      "versionInfo": "1.0.228"
+      "versionInfo": "1.0.229"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-serde-core-1.0.228",
+      "SPDXID": "SPDXRef-Cargo-serde-core-1.0.229",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad"
+          "checksumValue": "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -4219,7 +4219,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/serde_core@1.0.228",
+          "referenceLocator": "pkg:cargo/serde_core@1.0.229",
           "referenceType": "purl"
         }
       ],
@@ -4227,14 +4227,14 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "serde_core",
-      "versionInfo": "1.0.228"
+      "versionInfo": "1.0.229"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-serde-derive-1.0.228",
+      "SPDXID": "SPDXRef-Cargo-serde-derive-1.0.229",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
+          "checksumValue": "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -4242,7 +4242,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/serde_derive@1.0.228",
+          "referenceLocator": "pkg:cargo/serde_derive@1.0.229",
           "referenceType": "purl"
         }
       ],
@@ -4250,7 +4250,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "serde_derive",
-      "versionInfo": "1.0.228"
+      "versionInfo": "1.0.229"
     },
     {
       "SPDXID": "SPDXRef-Cargo-serde-json-1.0.149",
@@ -4707,11 +4707,11 @@
       "versionInfo": "0.13.2"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-tempfile-3.26.0",
+      "SPDXID": "SPDXRef-Cargo-tempfile-3.27.0",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "82a72c767771b47409d2345987fda8628641887d5466101319899796367354a0"
+          "checksumValue": "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -4719,7 +4719,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/tempfile@3.26.0",
+          "referenceLocator": "pkg:cargo/tempfile@3.27.0",
           "referenceType": "purl"
         }
       ],
@@ -4727,7 +4727,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "tempfile",
-      "versionInfo": "3.26.0"
+      "versionInfo": "3.27.0"
     },
     {
       "SPDXID": "SPDXRef-Cargo-tendril-0.5.1",
@@ -5443,29 +5443,6 @@
       "versionInfo": "1.1.0"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-windows-sys-0.59.0",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows-sys@0.59.0",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows-sys",
-      "versionInfo": "0.59.0"
-    },
-    {
       "SPDXID": "SPDXRef-Cargo-windows-sys-0.61.2",
       "checksums": [
         {
@@ -5487,213 +5464,6 @@
       "licenseDeclared": "NOASSERTION",
       "name": "windows-sys",
       "versionInfo": "0.61.2"
-    },
-    {
-      "SPDXID": "SPDXRef-Cargo-windows-targets-0.52.6",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "9b724f72796e036ab90c1021d4780d4d3d648aca59e491e6b98e725b84e99973"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows-targets@0.52.6",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows-targets",
-      "versionInfo": "0.52.6"
-    },
-    {
-      "SPDXID": "SPDXRef-Cargo-windows-aarch64-gnullvm-0.52.6",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "32a4622180e7a0ec044bb555404c800bc9fd9ec262ec147edd5989ccd0c02cd3"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows_aarch64_gnullvm@0.52.6",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows_aarch64_gnullvm",
-      "versionInfo": "0.52.6"
-    },
-    {
-      "SPDXID": "SPDXRef-Cargo-windows-aarch64-msvc-0.52.6",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "09ec2a7bb152e2252b53fa7803150007879548bc709c039df7627cabbd05d469"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows_aarch64_msvc@0.52.6",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows_aarch64_msvc",
-      "versionInfo": "0.52.6"
-    },
-    {
-      "SPDXID": "SPDXRef-Cargo-windows-i686-gnu-0.52.6",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "8e9b5ad5ab802e97eb8e295ac6720e509ee4c243f69d781394014ebfe8bbfa0b"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows_i686_gnu@0.52.6",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows_i686_gnu",
-      "versionInfo": "0.52.6"
-    },
-    {
-      "SPDXID": "SPDXRef-Cargo-windows-i686-gnullvm-0.52.6",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "0eee52d38c090b3caa76c563b86c3a4bd71ef1a819287c19d586d7334ae8ed66"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows_i686_gnullvm@0.52.6",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows_i686_gnullvm",
-      "versionInfo": "0.52.6"
-    },
-    {
-      "SPDXID": "SPDXRef-Cargo-windows-i686-msvc-0.52.6",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "240948bc05c5e7c6dabba28bf89d89ffce3e303022809e73deaefe4f6ec56c66"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows_i686_msvc@0.52.6",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows_i686_msvc",
-      "versionInfo": "0.52.6"
-    },
-    {
-      "SPDXID": "SPDXRef-Cargo-windows-x86-64-gnu-0.52.6",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "147a5c80aabfbf0c7d901cb5895d1de30ef2907eb21fbbab29ca94c5b08b1a78"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows_x86_64_gnu@0.52.6",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows_x86_64_gnu",
-      "versionInfo": "0.52.6"
-    },
-    {
-      "SPDXID": "SPDXRef-Cargo-windows-x86-64-gnullvm-0.52.6",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "24d5b23dc417412679681396f2b49f3de8c1473deb516bd34410872eff51ed0d"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows_x86_64_gnullvm@0.52.6",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows_x86_64_gnullvm",
-      "versionInfo": "0.52.6"
-    },
-    {
-      "SPDXID": "SPDXRef-Cargo-windows-x86-64-msvc-0.52.6",
-      "checksums": [
-        {
-          "algorithm": "SHA256",
-          "checksumValue": "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-        }
-      ],
-      "copyrightText": "NOASSERTION",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/windows_x86_64_msvc@0.52.6",
-          "referenceType": "purl"
-        }
-      ],
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "name": "windows_x86_64_msvc",
-      "versionInfo": "0.52.6"
     },
     {
       "SPDXID": "SPDXRef-Cargo-winnow-1.0.4",
@@ -6375,17 +6145,17 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-anstream-0.6.21",
+      "relatedSpdxElement": "SPDXRef-Cargo-anstream-1.0.0",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-anstyle-1.0.13",
+      "relatedSpdxElement": "SPDXRef-Cargo-anstyle-1.0.14",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-anstyle-parse-0.2.7",
+      "relatedSpdxElement": "SPDXRef-Cargo-anstyle-parse-1.0.0",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
@@ -6540,17 +6310,17 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-clap-4.5.60",
+      "relatedSpdxElement": "SPDXRef-Cargo-clap-4.6.4",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-clap-builder-4.5.60",
+      "relatedSpdxElement": "SPDXRef-Cargo-clap-builder-4.6.2",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-clap-derive-4.5.55",
+      "relatedSpdxElement": "SPDXRef-Cargo-clap-derive-4.6.4",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
@@ -6605,12 +6375,12 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-curl-0.4.49",
+      "relatedSpdxElement": "SPDXRef-Cargo-curl-0.4.50",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-curl-sys-0.4.85-curl-8.18.0",
+      "relatedSpdxElement": "SPDXRef-Cargo-curl-sys-0.4.90-curl-8.21.0",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
@@ -7270,17 +7040,17 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-serde-1.0.228",
+      "relatedSpdxElement": "SPDXRef-Cargo-serde-1.0.229",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-serde-core-1.0.228",
+      "relatedSpdxElement": "SPDXRef-Cargo-serde-core-1.0.229",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-serde-derive-1.0.228",
+      "relatedSpdxElement": "SPDXRef-Cargo-serde-derive-1.0.229",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
@@ -7385,7 +7155,7 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-tempfile-3.26.0",
+      "relatedSpdxElement": "SPDXRef-Cargo-tempfile-3.27.0",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
@@ -7545,57 +7315,7 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-sys-0.59.0",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
       "relatedSpdxElement": "SPDXRef-Cargo-windows-sys-0.61.2",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-targets-0.52.6",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-aarch64-gnullvm-0.52.6",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-aarch64-msvc-0.52.6",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-i686-gnu-0.52.6",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-i686-gnullvm-0.52.6",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-i686-msvc-0.52.6",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-x86-64-gnu-0.52.6",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-x86-64-gnullvm-0.52.6",
-      "relationshipType": "DEPENDS_ON",
-      "spdxElementId": "SPDXRef-Application-bird"
-    },
-    {
-      "relatedSpdxElement": "SPDXRef-Cargo-windows-x86-64-msvc-0.52.6",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
