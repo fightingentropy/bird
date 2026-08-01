@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::env;
 #[cfg(target_os = "macos")]
 use std::ffi::CString;
+use std::fmt;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -60,13 +61,41 @@ const SUPPORTED_IMPERSONATION_PROFILES: &[&str] = &[
     "tor145",
 ];
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
     pub timeout: Option<Duration>,
+}
+
+impl fmt::Debug for HttpRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let headers = self
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                let value = if matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "authorization" | "cookie" | "x-csrf-token"
+                ) {
+                    "[REDACTED]"
+                } else {
+                    value.as_str()
+                };
+                (name, value)
+            })
+            .collect::<Vec<_>>();
+        formatter
+            .debug_struct("HttpRequest")
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field("headers", &headers)
+            .field("body_bytes", &self.body.as_ref().map(Vec::len))
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -109,11 +138,20 @@ pub struct TransportInfo {
     pub error: Option<String>,
 }
 
-#[derive(Debug)]
 pub struct CurlTransport {
     proxy: Option<String>,
     impersonation: ImpersonationConfig,
     easy: Mutex<Easy>,
+}
+
+impl fmt::Debug for CurlTransport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CurlTransport")
+            .field("proxy", &self.proxy.as_ref().map(|_| "[REDACTED]"))
+            .field("impersonation", &self.impersonation)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CurlTransport {
@@ -182,11 +220,11 @@ impl CurlTransport {
                 Ok(chunk.len())
             })?;
             transfer.header_function(|line| {
-                if let Ok(line) = std::str::from_utf8(line) {
-                    if let Some((name, value)) = line.split_once(':') {
-                        response_headers
-                            .insert(name.trim().to_ascii_lowercase(), value.trim().to_owned());
-                    }
+                if let Ok(line) = std::str::from_utf8(line)
+                    && let Some((name, value)) = line.split_once(':')
+                {
+                    response_headers
+                        .insert(name.trim().to_ascii_lowercase(), value.trim().to_owned());
                 }
                 true
             })?;
@@ -379,8 +417,8 @@ fn read_env_nonempty(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_IMPERSONATION_PROFILE, ImpersonationConfig, ProfileSource, TransportInfo,
-        is_twitter_host, resolve_impersonation_profile,
+        DEFAULT_IMPERSONATION_PROFILE, HttpRequest, ImpersonationConfig, ProfileSource,
+        TransportInfo, is_twitter_host, resolve_impersonation_profile,
     };
     use bird_curl_impersonate_sys as impersonate_sys;
 
@@ -508,5 +546,25 @@ mod tests {
         assert_eq!(info.profile, None);
         assert_eq!(info.profile_source, Some("BIRD_CURL_IMPERSONATE"));
         assert_eq!(info.error.as_deref(), Some("bad profile"));
+    }
+
+    #[test]
+    fn request_debug_redacts_authentication_headers_and_body() {
+        let request = HttpRequest {
+            method: "POST".into(),
+            url: "https://x.com/i/api/test".into(),
+            headers: vec![
+                ("cookie".into(), "auth_token=secret".into()),
+                ("x-csrf-token".into(), "csrf-secret".into()),
+                ("accept".into(), "application/json".into()),
+            ],
+            body: Some(b"private body".to_vec()),
+            timeout: None,
+        };
+        let debug = format!("{request:?}");
+        assert!(!debug.contains("secret"));
+        assert!(!debug.contains("private body"));
+        assert!(debug.contains("[REDACTED]"));
+        assert!(debug.contains("application/json"));
     }
 }

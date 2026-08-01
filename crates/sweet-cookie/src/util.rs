@@ -39,11 +39,7 @@ pub(crate) fn normalize_names(names: &[String]) -> Option<HashSet<String>> {
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned)
         .collect::<HashSet<_>>();
-    if names.is_empty() {
-        None
-    } else {
-        Some(names)
-    }
+    if names.is_empty() { None } else { Some(names) }
 }
 
 pub(crate) fn default_browsers() -> Vec<crate::BrowserName> {
@@ -82,7 +78,10 @@ pub(crate) fn parse_browsers_env() -> Option<Vec<crate::BrowserName>> {
 }
 
 pub(crate) fn parse_mode_env() -> Option<CookieMode> {
-    match read_env_nonempty("SWEET_COOKIE_MODE")?.to_lowercase().as_str() {
+    match read_env_nonempty("SWEET_COOKIE_MODE")?
+        .to_lowercase()
+        .as_str()
+    {
         "merge" => Some(CookieMode::Merge),
         "first" => Some(CookieMode::First),
         _ => None,
@@ -90,7 +89,10 @@ pub(crate) fn parse_mode_env() -> Option<CookieMode> {
 }
 
 pub(crate) fn read_env_nonempty(key: &str) -> Option<String> {
-    env::var(key).ok().map(|value| value.trim().to_owned()).filter(|value| !value.is_empty())
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 pub(crate) fn dedupe_cookies(cookies: impl IntoIterator<Item = Cookie>) -> Vec<Cookie> {
@@ -113,12 +115,15 @@ pub(crate) fn dedupe_cookies(cookies: impl IntoIterator<Item = Cookie>) -> Vec<C
 pub(crate) fn host_matches_cookie_domain(host: &str, cookie_domain: &str) -> bool {
     let normalized_host = host.to_ascii_lowercase();
     let normalized_domain = cookie_domain.trim_start_matches('.').to_ascii_lowercase();
-    normalized_host == normalized_domain || normalized_host.ends_with(&format!(".{normalized_domain}"))
+    normalized_host == normalized_domain
+        || normalized_host.ends_with(&format!(".{normalized_domain}"))
 }
 
 pub(crate) fn cookie_matches_hosts(cookie_domain: &str, hosts: &[String]) -> bool {
     let domain = cookie_domain.trim_start_matches('.');
-    hosts.iter().any(|host| host_matches_cookie_domain(host, domain))
+    hosts
+        .iter()
+        .any(|host| host_matches_cookie_domain(host, domain))
 }
 
 pub(crate) fn normalize_expiration(expires: Option<i64>) -> Option<i64> {
@@ -145,7 +150,10 @@ pub(crate) fn hosts_from_origins(origins: &[Url]) -> Vec<String> {
 pub(crate) fn safe_hostname_from_url(raw: &str) -> Option<String> {
     Url::parse(raw)
         .ok()
-        .and_then(|url| url.host_str().map(|host| host.trim_start_matches('.').to_owned()))
+        .and_then(|url| {
+            url.host_str()
+                .map(|host| host.trim_start_matches('.').to_owned())
+        })
         .or_else(|| {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
@@ -161,20 +169,26 @@ pub(crate) fn looks_like_path(value: &str) -> bool {
 }
 
 pub(crate) fn expand_path(value: &str) -> PathBuf {
-    if let Some(stripped) = value.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
-        }
+    if let Some(stripped) = value.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(stripped);
     }
     let path = PathBuf::from(value);
     if path.is_absolute() {
         path
     } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path)
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
     }
 }
 
-pub(crate) fn copy_sidecar(source_db_path: &Path, target_db_path: &Path, suffix: &str) -> std::io::Result<()> {
+pub(crate) fn copy_sidecar(
+    source_db_path: &Path,
+    target_db_path: &Path,
+    suffix: &str,
+) -> std::io::Result<()> {
     let sidecar = PathBuf::from(format!("{}{}", source_db_path.display(), suffix));
     if sidecar.exists() {
         let target = PathBuf::from(format!("{}{}", target_db_path.display(), suffix));

@@ -24,6 +24,14 @@ curl -fsSL https://raw.githubusercontent.com/fightingentropy/bird/main/scripts/i
 
 By default that installs `bird` and `sweet-cookie-diagnose` into `~/.local/bin`.
 
+Release workflows publish GitHub build-provenance attestations. If the GitHub CLI is installed,
+make attestation verification mandatory during installation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fightingentropy/bird/main/scripts/install.sh \
+  | BIRD_VERIFY_ATTESTATION=1 bash
+```
+
 Useful overrides:
 
 - `BIRD_INSTALL_DIR=/usr/local/bin`
@@ -67,14 +75,37 @@ brew install pkg-config make cmake ninja go autoconf automake libtool
 
 The repo vendors the macOS source archives needed by `libcurl-impersonate` under `third_party/curl-impersonate/distfiles/`, so the native build is network-free after clone. The remaining helpers used by the vendored transport (`patch`, `tar`, `unzip`) are available in a standard macOS install.
 
+Every vendored archive has a pinned SHA-256 digest and an explicit archive root in
+`manifest.json`. `scripts/vendor-supply-chain.py` verifies every entry before build and maintains
+the committed SPDX SBOM at `third_party/curl-impersonate/SBOM.spdx.json`.
+
 ## Authentication
 
 `bird` resolves credentials in this order:
 
-1. `--auth-token` and `--ct0`
+1. JSON supplied over `--credentials-stdin` or an inherited `--credentials-fd`
 2. `AUTH_TOKEN` / `TWITTER_AUTH_TOKEN` and `CT0` / `TWITTER_CT0`
-3. cached verified cookies
+3. cached verified cookies in macOS Keychain or Linux Secret Service
 4. browser cookies
+
+Session values are intentionally not accepted as command-line arguments. For automation, pass
+this shape through stdin or a private inherited descriptor:
+
+```json
+{"authToken":"...","ct0":"..."}
+```
+
+```bash
+credential-helper-that-prints-json | bird --credentials-stdin whoami
+
+exec 9<"$XDG_RUNTIME_DIR/bird-credentials.json"
+bird --credentials-fd 9 whoami
+exec 9<&-
+```
+
+If the native credential store is unavailable, `bird` uses a compatibility cache only after
+restricting its directory to `0700` and the cache file to `0600`. The cache stores only
+`auth_token` and `ct0`, never the browser's full cookie header.
 
 Default browser order on macOS:
 
@@ -137,12 +168,13 @@ bird unbookmark 1234567890123456789
 
 ## Config
 
-`bird` reads these config files:
+`bird` reads the user config automatically:
 
 - `~/.config/bird/config.json5`
-- `./.birdrc.json5`
 
-Local config overrides global config.
+A project-local `./.birdrc.json5` is ignored by default because an arbitrary checkout must not
+control browser-profile paths or network timeouts. Pass `--trust-project-config` for a repository
+you have reviewed; the trusted local file then overrides the user config.
 
 Example:
 
@@ -165,6 +197,9 @@ Useful flags:
 - `--timeout <ms>`
 - `--cookie-timeout <ms>`
 - `--quote-depth <n>`
+- `--trust-project-config`
+- `--credentials-stdin`
+- `--credentials-fd <fd>`
 
 Useful environment variables:
 
@@ -176,6 +211,10 @@ Useful environment variables:
 - `BIRD_COOKIE_TIMEOUT_MS`
 - `BIRD_QUOTE_DEPTH`
 - `TWITTER_PROXY`
+
+When `TWITTER_PROXY` is set, `bird` prints a warning because the proxy receives authenticated X
+traffic and can observe session metadata and content. Do not use a proxy you do not control or
+trust.
 
 ## Transport
 
@@ -209,8 +248,21 @@ Non-macOS builds keep the plain libcurl transport path.
 
 ## Build a release
 
+Run the same format, lint, test, supply-chain, installer-safety, release-build, and smoke checks
+used by CI:
+
+```bash
+bash scripts/check.sh
+```
+
 ```bash
 ./scripts/package-release.sh
 ```
 
-That produces a versioned tarball in `dist/`.
+That produces a versioned tarball in `dist/`. The archive includes the SPDX SBOM. Tagged release
+workflows attest each archive and checksum before publishing; verify a downloaded archive with:
+
+```bash
+gh attestation verify bird-v0.1.4-aarch64-apple-darwin.tar.gz \
+  --repo fightingentropy/bird
+```

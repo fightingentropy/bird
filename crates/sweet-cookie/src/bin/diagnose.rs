@@ -1,10 +1,13 @@
+use std::fs::File;
+use std::io::{self, Read};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
 use sweet_cookie::{
-    browsers_for_cli, get_cookies, parse_mode, CookieHeaderOptions, CookieHeaderSort,
-    GetCookiesOptions,
+    CookieHeaderOptions, CookieHeaderSort, GetCookiesOptions, browsers_for_cli, get_cookies,
+    parse_mode, to_redacted_cookie_header,
 };
 
 #[derive(Debug, Parser)]
@@ -31,10 +34,10 @@ struct Args {
     safari_cookies_file: Option<String>,
     #[arg(long = "inline-cookies-file")]
     inline_cookies_file: Option<String>,
-    #[arg(long = "inline-cookies-json")]
-    inline_cookies_json: Option<String>,
-    #[arg(long = "inline-cookies-base64")]
-    inline_cookies_base64: Option<String>,
+    #[arg(long = "inline-cookies-stdin", conflicts_with = "inline_cookies_fd")]
+    inline_cookies_stdin: bool,
+    #[arg(long = "inline-cookies-fd", conflicts_with = "inline_cookies_stdin")]
+    inline_cookies_fd: Option<u32>,
     #[arg(long = "include-expired", default_value_t = false)]
     include_expired: bool,
     #[arg(long = "timeout-ms")]
@@ -47,6 +50,7 @@ struct Args {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    let inline_payload = read_inline_payload(&args)?;
     let result = get_cookies(GetCookiesOptions {
         url: args.url,
         origins: args.origins,
@@ -62,8 +66,8 @@ fn main() -> anyhow::Result<()> {
         debug: false,
         mode: parse_mode(args.mode.as_deref())?,
         inline_cookies_file: args.inline_cookies_file.map(Into::into),
-        inline_cookies_json: args.inline_cookies_json,
-        inline_cookies_base64: args.inline_cookies_base64,
+        inline_cookies_json: inline_payload,
+        inline_cookies_base64: None,
     })?;
 
     for warning in &result.warnings {
@@ -73,7 +77,7 @@ fn main() -> anyhow::Result<()> {
     println!();
     println!(
         "{}",
-        sweet_cookie::to_cookie_header(
+        to_redacted_cookie_header(
             &result.cookies,
             CookieHeaderOptions {
                 dedupe_by_name: args.dedupe_by_name,
@@ -82,4 +86,35 @@ fn main() -> anyhow::Result<()> {
         )
     );
     Ok(())
+}
+
+fn read_inline_payload(args: &Args) -> anyhow::Result<Option<String>> {
+    const MAX_SECRET_INPUT_BYTES: u64 = 1024 * 1024;
+    let mut input: Option<Box<dyn Read>> = if args.inline_cookies_stdin {
+        Some(Box::new(io::stdin()))
+    } else if let Some(fd) = args.inline_cookies_fd {
+        #[cfg(unix)]
+        {
+            let path = PathBuf::from(format!("/dev/fd/{fd}"));
+            Some(Box::new(File::open(path)?))
+        }
+        #[cfg(not(unix))]
+        {
+            anyhow::bail!("--inline-cookies-fd is supported only on Unix platforms");
+        }
+    } else {
+        None
+    };
+
+    let Some(input) = input.as_mut() else {
+        return Ok(None);
+    };
+    let mut payload = String::new();
+    input
+        .take(MAX_SECRET_INPUT_BYTES + 1)
+        .read_to_string(&mut payload)?;
+    if payload.len() as u64 > MAX_SECRET_INPUT_BYTES {
+        anyhow::bail!("inline cookie input exceeds the 1 MiB safety limit");
+    }
+    Ok(Some(payload))
 }
