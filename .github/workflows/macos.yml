@@ -30,7 +30,7 @@ jobs:
           echo "value=$stamp" >> "$GITHUB_OUTPUT"
 
       - name: Cache Cargo Registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -38,7 +38,7 @@ jobs:
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache Native Impersonation Build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target/curl-impersonate-cache
           key: curl-impersonate-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/curl-impersonate/distfiles/manifest.json', 'third_party/curl-impersonate/patches/**', 'crates/bird-curl-impersonate-sys/**') }}-${{ steps.compiler-stamp.outputs.value }}
@@ -88,7 +88,7 @@ jobs:
           echo "value=$stamp" >> "$GITHUB_OUTPUT"
 
       - name: Cache Cargo Registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -96,7 +96,7 @@ jobs:
           key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Cache Native Impersonation Build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target/curl-impersonate-cache
           key: curl-impersonate-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/curl-impersonate/distfiles/manifest.json', 'third_party/curl-impersonate/patches/**', 'crates/bird-curl-impersonate-sys/**') }}-${{ steps.compiler-stamp.outputs.value }}
@@ -140,7 +140,7 @@ jobs:
           echo "value=$stamp" >> "$GITHUB_OUTPUT"
 
       - name: Cache Cargo Registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -149,7 +149,7 @@ jobs:
 
       - name: Cache Native Impersonation Build
         if: runner.os == 'macOS'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target/curl-impersonate-cache
           key: curl-impersonate-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/curl-impersonate/distfiles/manifest.json', 'third_party/curl-impersonate/patches/**', 'crates/bird-curl-impersonate-sys/**') }}-${{ steps.compiler-stamp.outputs.value }}
