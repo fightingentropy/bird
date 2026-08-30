@@ -587,7 +587,10 @@ mod tests {
         let cookies = temp_dir.path().join("Default/Cookies");
         touch_cookie_db(&cookies);
 
-        let resolved = resolve_chromium_cookies_db(BrowserName::Chrome, Some(temp_dir.path().to_str().unwrap()));
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
         assert_eq!(resolved, Some(cookies));
     }
 
@@ -597,7 +600,10 @@ mod tests {
         let cookies = temp_dir.path().join("Default/Network/Cookies");
         touch_cookie_db(&cookies);
 
-        let resolved = resolve_chromium_cookies_db(BrowserName::Chrome, Some(temp_dir.path().to_str().unwrap()));
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
         assert_eq!(resolved, Some(cookies));
     }
 
@@ -607,7 +613,10 @@ mod tests {
         let cookies = temp_dir.path().join("Cookies");
         touch_cookie_db(&cookies);
 
-        let resolved = resolve_chromium_cookies_db(BrowserName::Chrome, Some(temp_dir.path().to_str().unwrap()));
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
         assert_eq!(resolved, Some(cookies));
     }
 
@@ -617,7 +626,10 @@ mod tests {
         let cookies = temp_dir.path().join("Network/Cookies");
         touch_cookie_db(&cookies);
 
-        let resolved = resolve_chromium_cookies_db(BrowserName::Chrome, Some(temp_dir.path().to_str().unwrap()));
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
         assert_eq!(resolved, Some(cookies));
     }
 
@@ -629,7 +641,10 @@ mod tests {
         touch_cookie_db(&legacy);
         touch_cookie_db(&network);
 
-        let resolved = resolve_chromium_cookies_db(BrowserName::Chrome, Some(temp_dir.path().to_str().unwrap()));
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
         assert_eq!(resolved, Some(network));
     }
 }
