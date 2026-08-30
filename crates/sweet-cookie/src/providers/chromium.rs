@@ -199,19 +199,31 @@ fn read_chromium_sqlite_db(
     Ok(dedupe_cookies(cookies))
 }
 
+fn chromium_profile_cookie_candidates(profile_dir: &Path) -> [PathBuf; 2] {
+    [
+        profile_dir.join("Network/Cookies"),
+        profile_dir.join("Cookies"),
+    ]
+}
+
+fn find_existing_chromium_cookies_db(candidates: [PathBuf; 2]) -> Option<PathBuf> {
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+fn resolve_chromium_cookies_db_from_path(path: PathBuf) -> Option<PathBuf> {
+    if path.is_file() {
+        return Some(path);
+    }
+    find_existing_chromium_cookies_db(chromium_profile_cookie_candidates(&path)).or_else(|| {
+        find_existing_chromium_cookies_db(chromium_profile_cookie_candidates(&path.join("Default")))
+    })
+}
+
 fn resolve_chromium_cookies_db(browser: BrowserName, profile: Option<&str>) -> Option<PathBuf> {
     if let Some(profile) = profile
         && looks_like_path(profile)
     {
-        let path = expand_path(profile);
-        if path.is_file() {
-            return Some(path);
-        }
-        for candidate in [path.join("Cookies"), path.join("Network/Cookies")] {
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
+        return resolve_chromium_cookies_db_from_path(expand_path(profile));
     }
 
     let home = dirs::home_dir()?;
@@ -229,13 +241,10 @@ fn resolve_chromium_cookies_db(browser: BrowserName, profile: Option<&str>) -> O
     };
     let profile_dir = profile.unwrap_or("Default");
     for root in roots {
-        for candidate in [
-            root.join(profile_dir).join("Cookies"),
-            root.join(profile_dir).join("Network/Cookies"),
-        ] {
-            if candidate.exists() {
-                return Some(candidate);
-            }
+        if let Some(candidate) = find_existing_chromium_cookies_db(
+            chromium_profile_cookie_candidates(&root.join(profile_dir)),
+        ) {
+            return Some(candidate);
         }
     }
     None
@@ -559,5 +568,79 @@ mod tests {
         let linux_key = derive_mac_key_with_iterations("test-password", 1);
         let macos_key = derive_mac_key_with_iterations("test-password", 1003);
         assert_ne!(linux_key, macos_key);
+    }
+
+    fn touch_cookie_db(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, b"").unwrap();
+    }
+
+    #[test]
+    fn resolve_chromium_cookies_db_user_data_dir_with_default_cookies_only() {
+        let temp_dir = tempdir().unwrap();
+        let cookies = temp_dir.path().join("Default/Cookies");
+        touch_cookie_db(&cookies);
+
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
+        assert_eq!(resolved, Some(cookies));
+    }
+
+    #[test]
+    fn resolve_chromium_cookies_db_user_data_dir_with_default_network_cookies_only() {
+        let temp_dir = tempdir().unwrap();
+        let cookies = temp_dir.path().join("Default/Network/Cookies");
+        touch_cookie_db(&cookies);
+
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
+        assert_eq!(resolved, Some(cookies));
+    }
+
+    #[test]
+    fn resolve_chromium_cookies_db_profile_dir_with_cookies_only() {
+        let temp_dir = tempdir().unwrap();
+        let cookies = temp_dir.path().join("Cookies");
+        touch_cookie_db(&cookies);
+
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
+        assert_eq!(resolved, Some(cookies));
+    }
+
+    #[test]
+    fn resolve_chromium_cookies_db_profile_dir_with_network_cookies_only() {
+        let temp_dir = tempdir().unwrap();
+        let cookies = temp_dir.path().join("Network/Cookies");
+        touch_cookie_db(&cookies);
+
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
+        assert_eq!(resolved, Some(cookies));
+    }
+
+    #[test]
+    fn resolve_chromium_cookies_db_prefers_network_cookies_under_default() {
+        let temp_dir = tempdir().unwrap();
+        let legacy = temp_dir.path().join("Default/Cookies");
+        let network = temp_dir.path().join("Default/Network/Cookies");
+        touch_cookie_db(&legacy);
+        touch_cookie_db(&network);
+
+        let resolved = resolve_chromium_cookies_db(
+            BrowserName::Chrome,
+            Some(temp_dir.path().to_str().unwrap()),
+        );
+        assert_eq!(resolved, Some(network));
     }
 }
