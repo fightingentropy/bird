@@ -206,21 +206,17 @@ fn chromium_profile_cookie_candidates(profile_dir: &Path) -> [PathBuf; 2] {
     ]
 }
 
+fn find_existing_chromium_cookies_db(candidates: [PathBuf; 2]) -> Option<PathBuf> {
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
 fn resolve_chromium_cookies_db_from_path(path: PathBuf) -> Option<PathBuf> {
     if path.is_file() {
         return Some(path);
     }
-    for candidate in chromium_profile_cookie_candidates(&path) {
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    for candidate in chromium_profile_cookie_candidates(&path.join("Default")) {
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    find_existing_chromium_cookies_db(chromium_profile_cookie_candidates(&path)).or_else(|| {
+        find_existing_chromium_cookies_db(chromium_profile_cookie_candidates(&path.join("Default")))
+    })
 }
 
 fn resolve_chromium_cookies_db(browser: BrowserName, profile: Option<&str>) -> Option<PathBuf> {
@@ -245,10 +241,10 @@ fn resolve_chromium_cookies_db(browser: BrowserName, profile: Option<&str>) -> O
     };
     let profile_dir = profile.unwrap_or("Default");
     for root in roots {
-        for candidate in chromium_profile_cookie_candidates(&root.join(profile_dir)) {
-            if candidate.exists() {
-                return Some(candidate);
-            }
+        if let Some(candidate) = find_existing_chromium_cookies_db(
+            chromium_profile_cookie_candidates(&root.join(profile_dir)),
+        ) {
+            return Some(candidate);
         }
     }
     None
