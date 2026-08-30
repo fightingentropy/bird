@@ -245,6 +245,13 @@ Non-macOS builds keep the plain libcurl transport path.
 - Linux x64 builds use the plain libcurl transport path
 - Safari cookie support is included on macOS
 - Chrome and Firefox cookie support are included on supported platforms
+- Linux Chrome cookie decryption needs a decryptable OSCrypt key from libsecret
+  (GNOME Keyring/KWallet via Secret Service) or Chrome's basic password store
+  (`peanuts`). Bird looks up libsecret with `secret-tool lookup application chrome`
+  (or the Edge/Chromium equivalent) and falls back to the basic-store password when
+  Secret Service is unavailable. If Chrome has no keyring entry and no `os_crypt` key
+  in Local State, bird cannot derive the encryption key. App-bound encryption (v20)
+  and keyless sandbox profiles are not supported.
 
 ## Build a release
 
