@@ -57,22 +57,31 @@ pub(crate) fn get_cookies_from_chromium(
     let _ = copy_sidecar(&db_path, &temp_db_path, "-wal");
     let _ = copy_sidecar(&db_path, &temp_db_path, "-shm");
 
-    let password = match read_keychain_password(browser, timeout.unwrap_or(Duration::from_secs(3)))
-    {
-        Ok(password) => password,
-        Err(error) => {
-            return Ok(GetCookiesResult {
-                cookies: Vec::new(),
-                warnings: vec![error],
-            });
-        }
-    };
+    let password =
+        match read_safe_storage_password(browser, timeout.unwrap_or(Duration::from_secs(3))) {
+            Ok(password) => password,
+            Err(error) => {
+                return Ok(GetCookiesResult {
+                    cookies: Vec::new(),
+                    warnings: vec![error],
+                });
+            }
+        };
     if password.trim().is_empty() {
+        let warning = match std::env::consts::OS {
+            "macos" => {
+                "macOS Keychain returned an empty Chromium Safe Storage password.".to_owned()
+            }
+            "linux" => {
+                "Linux Secret Service returned an empty Chromium Safe Storage password.".to_owned()
+            }
+            other => format!(
+                "{other} credential store returned an empty Chromium Safe Storage password."
+            ),
+        };
         return Ok(GetCookiesResult {
             cookies: Vec::new(),
-            warnings: vec![
-                "macOS Keychain returned an empty Chromium Safe Storage password.".to_owned(),
-            ],
+            warnings: vec![warning],
         });
     }
 
@@ -213,6 +222,9 @@ fn resolve_chromium_cookies_db(browser: BrowserName, profile: Option<&str>) -> O
         ("macos", BrowserName::Edge) => {
             vec![home.join("Library/Application Support/Microsoft Edge")]
         }
+        ("linux", BrowserName::Chrome) => vec![home.join(".config/google-chrome")],
+        ("linux", BrowserName::Edge) => vec![home.join(".config/microsoft-edge")],
+        ("linux", _) => vec![home.join(".config/chromium")],
         _ => Vec::new(),
     };
     let profile_dir = profile.unwrap_or("Default");
@@ -229,7 +241,17 @@ fn resolve_chromium_cookies_db(browser: BrowserName, profile: Option<&str>) -> O
     None
 }
 
-fn read_keychain_password(browser: BrowserName, timeout: Duration) -> Result<String, String> {
+fn read_safe_storage_password(browser: BrowserName, timeout: Duration) -> Result<String, String> {
+    match std::env::consts::OS {
+        "macos" => read_macos_keychain_password(browser, timeout),
+        "linux" => read_linux_safe_storage_password(browser, timeout),
+        other => Err(format!(
+            "Chromium cookie decryption is not supported on {other}."
+        )),
+    }
+}
+
+fn read_macos_keychain_password(browser: BrowserName, timeout: Duration) -> Result<String, String> {
     let (account, service, label) = match browser {
         BrowserName::Chrome => ("Chrome", "Chrome Safe Storage", "Chrome Safe Storage"),
         BrowserName::Edge => (
@@ -240,6 +262,60 @@ fn read_keychain_password(browser: BrowserName, timeout: Duration) -> Result<Str
         _ => ("Chromium", "Chromium Safe Storage", "Chromium Safe Storage"),
     };
     read_keychain_generic_password(account, service, label, timeout)
+}
+
+fn read_linux_safe_storage_password(
+    browser: BrowserName,
+    timeout: Duration,
+) -> Result<String, String> {
+    let (application, label) = match browser {
+        BrowserName::Chrome => ("chrome", "Chrome Safe Storage"),
+        BrowserName::Edge => ("Microsoft Edge", "Microsoft Edge Safe Storage"),
+        _ => ("chromium", "Chromium Safe Storage"),
+    };
+
+    match read_linux_secret_service_password(application, label, timeout) {
+        Ok(password) if password.trim().is_empty() => Err(format!(
+            "Linux Secret Service returned an empty password for {label}."
+        )),
+        Ok(password) => Ok(password),
+        Err(_) => Ok("peanuts".to_owned()),
+    }
+}
+
+fn read_linux_secret_service_password(
+    application: &str,
+    label: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    let mut child = Command::new("secret-tool")
+        .args(["lookup", "application", application])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Linux Secret Service ({label}): {error}"))?;
+    let status = child
+        .wait_timeout(timeout)
+        .map_err(|error| format!("Linux Secret Service ({label}): {error}"))?
+        .ok_or_else(|| format!("Linux Secret Service ({label}): timed out"))?;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        let _ = pipe.read_to_string(&mut stdout);
+    }
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    if status.success() {
+        Ok(stdout.trim().to_owned())
+    } else {
+        Err(format!(
+            "Linux Secret Service ({label}): {}",
+            stderr
+                .trim()
+                .if_empty_then("secret not found / dbus unavailable / secret-tool missing.")
+        ))
+    }
 }
 
 fn read_keychain_generic_password(
@@ -278,9 +354,20 @@ fn read_keychain_generic_password(
     }
 }
 
+fn chromium_pbkdf2_iterations() -> u32 {
+    match std::env::consts::OS {
+        "macos" => 1003,
+        _ => 1,
+    }
+}
+
 fn derive_mac_key(password: &str) -> [u8; 16] {
+    derive_mac_key_with_iterations(password, chromium_pbkdf2_iterations())
+}
+
+fn derive_mac_key_with_iterations(password: &str, iterations: u32) -> [u8; 16] {
     let mut key = [0u8; 16];
-    pbkdf2_hmac::<Sha1>(password.as_bytes(), b"saltysalt", 1003, &mut key);
+    pbkdf2_hmac::<Sha1>(password.as_bytes(), b"saltysalt", iterations, &mut key);
     key
 }
 
@@ -449,5 +536,28 @@ mod tests {
                 .encrypt_padded_vec_mut::<Pkcs7>(value.as_bytes()),
         );
         payload
+    }
+
+    #[test]
+    fn linux_kdf_round_trip_uses_one_iteration() {
+        let key = derive_mac_key_with_iterations("test-password", 1);
+        let encrypted = encrypt_test_cookie("abc123", &key);
+        let decrypted = decrypt_chromium_cookie_value(&encrypted, &key, false);
+        assert_eq!(decrypted.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn macos_kdf_round_trip_uses_1003_iterations() {
+        let key = derive_mac_key_with_iterations("test-password", 1003);
+        let encrypted = encrypt_test_cookie("abc123", &key);
+        let decrypted = decrypt_chromium_cookie_value(&encrypted, &key, false);
+        assert_eq!(decrypted.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn linux_and_macos_kdf_produce_different_keys() {
+        let linux_key = derive_mac_key_with_iterations("test-password", 1);
+        let macos_key = derive_mac_key_with_iterations("test-password", 1003);
+        assert_ne!(linux_key, macos_key);
     }
 }
