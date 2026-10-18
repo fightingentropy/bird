@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/fightingentropy/bird/main/scripts/i
 Useful overrides:
 
 - `BIRD_INSTALL_DIR=/usr/local/bin`
-- `BIRD_VERSION=v0.1.4`
+- `BIRD_VERSION=v0.1.5`
 - `BIRD_GITHUB_REPO=fightingentropy/bird`
 
 Current installer/release targets: macOS Apple Silicon and Linux x64.
@@ -45,15 +45,15 @@ Current installer/release targets: macOS Apple Silicon and Linux x64.
 Download the matching release archive for your platform, extract it, and place `bird` somewhere on your `PATH`.
 
 ```bash
-tar -xzf bird-v0.1.4-aarch64-apple-darwin.tar.gz
-install -m 755 bird-v0.1.4-aarch64-apple-darwin/bin/bird /usr/local/bin/bird
+tar -xzf bird-v0.1.5-aarch64-apple-darwin.tar.gz
+install -m 755 bird-v0.1.5-aarch64-apple-darwin/bin/bird /usr/local/bin/bird
 ```
 
 Linux x64 uses the corresponding archive name:
 
 ```bash
-tar -xzf bird-v0.1.4-x86_64-unknown-linux-gnu.tar.gz
-install -m 755 bird-v0.1.4-x86_64-unknown-linux-gnu/bin/bird /usr/local/bin/bird
+tar -xzf bird-v0.1.5-x86_64-unknown-linux-gnu.tar.gz
+install -m 755 bird-v0.1.5-x86_64-unknown-linux-gnu/bin/bird /usr/local/bin/bird
 ```
 
 The release archive also includes `sweet-cookie-diagnose`, a small troubleshooting binary for cookie inspection.
@@ -270,6 +270,6 @@ That produces a versioned tarball in `dist/`. The archive includes the SPDX SBOM
 workflows attest each archive and checksum before publishing; verify a downloaded archive with:
 
 ```bash
-gh attestation verify bird-v0.1.4-aarch64-apple-darwin.tar.gz \
+gh attestation verify bird-v0.1.5-aarch64-apple-darwin.tar.gz \
   --repo fightingentropy/bird
 ```
