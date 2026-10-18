@@ -19,6 +19,9 @@ static CHROME_VERSION_RE: LazyLock<Regex> =
 static ONDEMAND_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"['"]ondemand\.s['"]\s*:\s*['"]([\w]*)['"]"#).expect("valid regex")
 });
+static ONDEMAND_CHUNK_ID_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(\d+(?:e\d+)?)\s*:\s*['"]ondemand\.s['"]"#).expect("valid regex")
+});
 static INDICES_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\(\w\[(\d{1,2})\],\s*16\)"#).expect("valid regex"));
 static MIGRATION_REDIRECT_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -29,6 +32,9 @@ static MIGRATION_REDIRECT_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 const DEFAULT_TTL: Duration = Duration::from_secs(30 * 60);
+/// After a failed bootstrap, skip refetching the x.com document for this long so every
+/// request doesn't pay for a page fetch that is likely to fail again.
+const FAILURE_BACKOFF: Duration = Duration::from_secs(5 * 60);
 const X_TRANSACTION_URL: &str = "https://x.com";
 const DEFAULT_KEYWORD: &str = "obfiowerehiring";
 const ADDITIONAL_RANDOM_NUMBER: u8 = 3;
@@ -111,6 +117,7 @@ pub struct RuntimeTransactionIdStore {
     ttl: Duration,
     cache_path: PathBuf,
     cached: Mutex<Option<CachedTransactionState>>,
+    failed_at: Mutex<Option<Instant>>,
 }
 
 impl Default for RuntimeTransactionIdStore {
@@ -125,6 +132,7 @@ impl RuntimeTransactionIdStore {
             ttl: ttl.unwrap_or(DEFAULT_TTL),
             cache_path: default_cache_path(),
             cached: Mutex::new(None),
+            failed_at: Mutex::new(None),
         }
     }
 
@@ -135,10 +143,24 @@ impl RuntimeTransactionIdStore {
         method: &str,
         url: &str,
     ) -> anyhow::Result<String> {
+        self.generate_with_cookies(transport, user_agent, None, method, url)
+    }
+
+    /// Like [`generate`](Self::generate), but bootstraps from the signed-in x.com document
+    /// when `cookie_header` is given. Logged out, x.com serves a client that no longer
+    /// carries the `ondemand.s` chunk the derivation needs.
+    pub fn generate_with_cookies(
+        &self,
+        transport: &dyn HttpTransport,
+        user_agent: &str,
+        cookie_header: Option<&str>,
+        method: &str,
+        url: &str,
+    ) -> anyhow::Result<String> {
         let path = Url::parse(url)
             .map(|url| url.path().to_owned())
             .unwrap_or_else(|_| url.to_owned());
-        let state = self.get_or_init(transport, user_agent)?;
+        let state = self.get_or_init(transport, user_agent, cookie_header)?;
         let now = current_transaction_time();
         let random_byte = rand::rng().random::<u8>();
         Ok(state.generate(method, &path, now, random_byte))
@@ -148,6 +170,7 @@ impl RuntimeTransactionIdStore {
         &self,
         transport: &dyn HttpTransport,
         user_agent: &str,
+        cookie_header: Option<&str>,
     ) -> anyhow::Result<TransactionState> {
         if let Some(state) = self.cached.lock().ok().and_then(|guard| guard.clone())
             && state.created_at.elapsed() <= self.ttl
@@ -160,7 +183,24 @@ impl RuntimeTransactionIdStore {
             return Ok(state);
         }
 
-        let state = fetch_transaction_state(transport, user_agent)?;
+        if let Some(failed_at) = self.failed_at.lock().ok().and_then(|guard| *guard)
+            && failed_at.elapsed() < FAILURE_BACKOFF
+        {
+            bail!("Transaction id bootstrap failed recently; retrying later");
+        }
+
+        let state = match fetch_transaction_state(transport, user_agent, cookie_header) {
+            Ok(state) => state,
+            Err(error) => {
+                if let Ok(mut guard) = self.failed_at.lock() {
+                    *guard = Some(Instant::now());
+                }
+                return Err(error);
+            }
+        };
+        if let Ok(mut guard) = self.failed_at.lock() {
+            *guard = None;
+        }
         self.store_in_memory(&state);
         let _ = self.write_disk_snapshot(&state);
         Ok(state)
@@ -202,15 +242,38 @@ impl RuntimeTransactionIdStore {
 fn fetch_transaction_state(
     transport: &dyn HttpTransport,
     user_agent: &str,
+    cookie_header: Option<&str>,
 ) -> anyhow::Result<TransactionState> {
-    let html = fetch_transaction_document(transport, user_agent)?;
-    let token = extract_ondemand_token(&html)?;
+    let html = match cookie_header {
+        None => fetch_transaction_document(transport, user_agent, None)?,
+        // A signed-in document that loads but lacks the ondemand chunk says nothing a
+        // logged-out one would not, so the logged-out document is only for when the
+        // signed-in one could not be fetched.
+        Some(cookie_header) => {
+            fetch_transaction_document(transport, user_agent, Some(cookie_header)).or_else(
+                |signed_in_error| {
+                    fetch_transaction_document(transport, user_agent, None).map_err(|_| {
+                        signed_in_error
+                            .context("Transaction id bootstrap failed signed in and logged out")
+                    })
+                },
+            )?
+        }
+    };
+    transaction_state_from_document(transport, &html)
+}
+
+fn transaction_state_from_document(
+    transport: &dyn HttpTransport,
+    html: &str,
+) -> anyhow::Result<TransactionState> {
+    let token = extract_ondemand_token(html)?;
     let ondemand_url =
         format!("https://abs.twimg.com/responsive-web/client-web/ondemand.s.{token}a.js");
     let ondemand_js = fetch_text(transport, "GET", &ondemand_url, vec![], None)?;
     let (row_index, key_byte_indices) = extract_indices(&ondemand_js)?;
-    let key_bytes = extract_site_verification_key_bytes(&html)?;
-    let frame_paths = extract_frame_paths(&html)?;
+    let key_bytes = extract_site_verification_key_bytes(html)?;
+    let frame_paths = extract_frame_paths(html)?;
     let animation_key =
         build_animation_key(&key_bytes, row_index, &key_byte_indices, &frame_paths)?;
     Ok(TransactionState {
@@ -222,15 +285,16 @@ fn fetch_transaction_state(
 fn fetch_transaction_document(
     transport: &dyn HttpTransport,
     user_agent: &str,
+    cookie_header: Option<&str>,
 ) -> anyhow::Result<String> {
     let browser_headers = transaction_document_headers(user_agent);
-    let mut html = fetch_text(
-        transport,
-        "GET",
-        X_TRANSACTION_URL,
-        browser_headers.clone(),
-        None,
-    )?;
+    // The session cookie goes to the constant x.com URL only. Later hops follow URLs the
+    // document supplies, and the migration flow is logged out anyway.
+    let mut first_headers = browser_headers.clone();
+    if let Some(cookie_header) = cookie_header {
+        first_headers.push(("cookie".into(), cookie_header.to_owned()));
+    }
+    let mut html = fetch_text(transport, "GET", X_TRANSACTION_URL, first_headers, None)?;
 
     if let Some(redirect_url) = extract_migration_redirect_url(&html) {
         html = fetch_text(
@@ -328,7 +392,28 @@ fn extract_ondemand_token(html: &str) -> anyhow::Result<String> {
         .and_then(|captures| captures.get(1))
         .map(|value| value.as_str().to_owned())
         .filter(|value| !value.is_empty())
-        .context("Failed to locate ondemand token in x.com document")
+        .or_else(|| extract_numeric_ondemand_token(html))
+        .context(
+            "Failed to locate ondemand token in x.com document (it is only served to signed-in sessions)",
+        )
+}
+
+/// The webpack chunk map is now keyed by numeric chunk id: the chunk file name is
+/// `({..., 59924:"ondemand.s"})[e] + "." + ({..., 59924:"<hash>"})[e] + "a.js"`.
+fn extract_numeric_ondemand_token(html: &str) -> Option<String> {
+    let captures = ONDEMAND_CHUNK_ID_RE.captures(html)?;
+    let id = captures.get(1)?.as_str();
+    let after_name = &html[captures.get(0)?.end()..];
+    // The hash map follows the name map inside the same chunk-file expression.
+    let expression = after_name
+        .find("a.js")
+        .map_or(after_name, |end| &after_name[..end]);
+    let id = regex::escape(id);
+    let hash_re = Regex::new(&format!(r#"[{{,]\s*{id}\s*:\s*['"]([0-9a-f]+)['"]"#)).ok()?;
+    hash_re
+        .captures(expression)
+        .and_then(|captures| captures.get(1))
+        .map(|value| value.as_str().to_owned())
 }
 
 fn extract_indices(ondemand_js: &str) -> anyhow::Result<(usize, Vec<usize>)> {
@@ -682,9 +767,208 @@ fn current_transaction_time() -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
     use super::{
-        TransactionState, animate_row, extract_indices, extract_ondemand_token, parse_path_rows,
+        RuntimeTransactionIdStore, TransactionState, animate_row, extract_indices,
+        extract_ondemand_token, parse_path_rows,
     };
+    use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
+
+    /// Serves an x.com document without the ondemand chunk and records the requests.
+    #[derive(Default)]
+    struct RecordingTransport {
+        calls: AtomicUsize,
+        cookies: Mutex<Vec<Option<String>>>,
+    }
+
+    impl HttpTransport for RecordingTransport {
+        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let cookie = request
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+                .map(|(_, value)| value.clone());
+            self.cookies.lock().expect("cookies").push(cookie);
+            Ok(HttpResponse {
+                status: 200,
+                body: b"<html><body>no ondemand here</body></html>".to_vec(),
+                ..HttpResponse::default()
+            })
+        }
+    }
+
+    fn temp_store(dir: &tempfile::TempDir) -> RuntimeTransactionIdStore {
+        RuntimeTransactionIdStore {
+            ttl: Duration::from_secs(60),
+            cache_path: dir.path().join("transaction-id.json"),
+            cached: Mutex::new(None),
+            failed_at: Mutex::new(None),
+        }
+    }
+
+    #[test]
+    fn extracts_ondemand_token_from_numeric_chunk_map() {
+        let html = r#"t.u=e=>(({346:"bundle.NotABot",59924:"ondemand.s"})[e]||e)+"."+({59862:"eabd1559",59924:"81a348d6aed80cad"})[e]+"a.js",t.miniCssF=e=>({59924:"0000000000000000"})[e]"#;
+        assert_eq!(
+            extract_ondemand_token(html).expect("token"),
+            "81a348d6aed80cad"
+        );
+    }
+
+    #[test]
+    fn extracts_ondemand_token_for_an_exponent_notation_chunk_id() {
+        // Chunk id 99000 is minified to `99e3`; `9e3` must not match its hash by suffix.
+        let html = r#"t.u=e=>(({9e3:"loader.SignupModule",99e3:"ondemand.s"})[e]||e)+"."+({9e3:"1111111111111111",99e3:"81a348d6aed80cad"})[e]+"a.js""#;
+        assert_eq!(
+            extract_ondemand_token(html).expect("token"),
+            "81a348d6aed80cad"
+        );
+    }
+
+    #[test]
+    fn missing_ondemand_chunk_is_an_error() {
+        assert!(extract_ondemand_token(r#"({346:"bundle.NotABot"})"#).is_err());
+    }
+
+    type Responder = Box<dyn Fn(&HttpRequest) -> (u32, String) + Send + Sync>;
+
+    /// Answers each request from `respond` (status, body) and records method, url and cookie.
+    struct ScriptedTransport {
+        respond: Responder,
+        seen: Mutex<Vec<(String, String, Option<String>)>>,
+    }
+
+    impl ScriptedTransport {
+        fn new(respond: impl Fn(&HttpRequest) -> (u32, String) + Send + Sync + 'static) -> Self {
+            Self {
+                respond: Box::new(respond),
+                seen: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn seen(&self) -> Vec<(String, String, Option<String>)> {
+            self.seen.lock().expect("seen").clone()
+        }
+    }
+
+    impl HttpTransport for ScriptedTransport {
+        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            let cookie = request
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+                .map(|(_, value)| value.clone());
+            self.seen.lock().expect("seen").push((
+                request.method.clone(),
+                request.url.clone(),
+                cookie,
+            ));
+            let (status, body) = (self.respond)(request);
+            Ok(HttpResponse {
+                status,
+                body: body.into_bytes(),
+                ..HttpResponse::default()
+            })
+        }
+    }
+
+    const SESSION: &str = "auth_token=SECRET; ct0=CSRF";
+
+    fn bootstrap(transport: &ScriptedTransport, cookie: Option<&str>) -> anyhow::Error {
+        let dir = tempfile::tempdir().expect("temp dir");
+        temp_store(&dir)
+            .generate_with_cookies(
+                transport,
+                "Mozilla/5.0 Chrome/141.0.0.0",
+                cookie,
+                "GET",
+                "https://x.com/i/api/graphql/abc/HomeTimeline",
+            )
+            .expect_err("the documents lack the ondemand chunk")
+    }
+
+    #[test]
+    fn signed_in_document_without_the_chunk_is_not_refetched_logged_out() {
+        let transport = ScriptedTransport::new(|_| (200, "<html>no ondemand here</html>".into()));
+
+        let error = bootstrap(&transport, Some(SESSION));
+
+        assert!(format!("{error:#}").contains("ondemand token"));
+        assert_eq!(
+            transport.seen(),
+            vec![("GET".into(), "https://x.com".into(), Some(SESSION.into()))]
+        );
+    }
+
+    #[test]
+    fn signed_in_fetch_failure_falls_back_logged_out() {
+        let transport = ScriptedTransport::new(|request| {
+            if request
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("cookie"))
+            {
+                (503, String::new())
+            } else {
+                (200, "<html>no ondemand here</html>".into())
+            }
+        });
+
+        let error = bootstrap(&transport, Some(SESSION));
+
+        assert!(format!("{error:#}").contains("ondemand token"));
+        let cookies = transport
+            .seen()
+            .into_iter()
+            .map(|(_, _, cookie)| cookie)
+            .collect::<Vec<_>>();
+        assert_eq!(cookies, vec![Some(SESSION.to_owned()), None]);
+    }
+
+    #[test]
+    fn session_cookie_never_reaches_a_page_supplied_url() {
+        // The signed-in document points at a plaintext migration URL, whose page has a form
+        // whose action only looks like x.com to a WHATWG URL parser.
+        let transport = ScriptedTransport::new(|request| match request.url.as_str() {
+            "https://x.com" => (
+                200,
+                r#"<meta http-equiv="refresh" content="0; url = http://x.com/x/migrate?tok=abc">"#
+                    .into(),
+            ),
+            "http://x.com/x/migrate?tok=abc" => (
+                200,
+                r#"<form name="f" method="POST" action="https://x.com\@127.0.0.1:9/x/migrate">
+                    <input name="tok" value="abc"></form>"#
+                    .into(),
+            ),
+            _ => (200, "<html>no ondemand here</html>".into()),
+        });
+
+        bootstrap(&transport, Some(SESSION));
+
+        let seen = transport.seen();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert_eq!(seen[0].2.as_deref(), Some(SESSION));
+        assert!(
+            seen[1..].iter().all(|(_, _, cookie)| cookie.is_none()),
+            "{seen:?}"
+        );
+    }
+
+    #[test]
+    fn failed_bootstrap_backs_off_instead_of_refetching() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = temp_store(&dir);
+        let transport = RecordingTransport::default();
+        for _ in 0..3 {
+            let _ = store.generate(&transport, "Mozilla/5.0", "GET", "https://x.com/i/api/x");
+        }
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn extracts_ondemand_token_from_homepage_html() {

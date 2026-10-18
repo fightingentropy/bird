@@ -100,8 +100,11 @@ impl TwitterClient {
     }
 
     pub fn refresh_query_ids(&self) -> anyhow::Result<QueryIdSnapshot> {
-        self.query_ids
-            .refresh(&self.transport, &target_query_id_operations())
+        self.query_ids.refresh_with_cookies(
+            &self.transport,
+            &target_query_id_operations(),
+            Some(&self.cookie_header()),
+        )
     }
 
     pub fn tweet(&self, text: &str, media_ids: Option<&[String]>) -> TweetMutationResult {
@@ -438,10 +441,11 @@ impl TwitterClient {
                     })
                     .unwrap_or(false);
             let page = if should_refresh {
-                let snapshot = self.query_ids.refresh_required(
+                let snapshot = self.query_ids.refresh_required_with_cookies(
                     &self.transport,
                     &target_query_id_operations(),
                     "Bookmarks",
+                    Some(&self.cookie_header()),
                 )?;
                 let refreshed_query_id =
                     snapshot.ids.get("Bookmarks").cloned().context(
@@ -1243,7 +1247,7 @@ impl TwitterClient {
 
         self.with_refreshed_query_ids_on_error(|| {
             let mut last_error = None;
-            for query_id in query_ids {
+            for query_id in self.current_query_ids(operation_name, query_ids) {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}?{params}");
                 let response = self.send_request("GET", &url, self.headers_json(), None);
                 let Ok(response) = response else {
@@ -1266,10 +1270,6 @@ impl TwitterClient {
                     message: error.to_string(),
                     needs_refresh: false,
                 })?;
-                if let Some(errors) = data.get("errors").and_then(Value::as_array) {
-                    last_error = Some(format_errors(errors));
-                    continue;
-                }
                 let instructions = data
                     .get("data")
                     .and_then(|value| value.get("user"))
@@ -1279,6 +1279,14 @@ impl TwitterClient {
                     .and_then(|value| value.get("instructions"))
                     .and_then(Value::as_array)
                     .map(Vec::as_slice);
+                // X can return the lists alongside field-level errors (e.g. a banner that
+                // fails to decode); only a response without the timeline is a failure.
+                if instructions.is_none()
+                    && let Some(errors) = data.get("errors").and_then(Value::as_array)
+                {
+                    last_error = Some(format_errors(errors));
+                    continue;
+                }
                 return Ok(parse_lists_from_instructions(instructions));
             }
 
@@ -1304,7 +1312,7 @@ impl TwitterClient {
             let mut last_error = None;
             let mut needs_refresh = false;
 
-            for query_id in query_ids {
+            for query_id in self.current_query_ids(operation_name, query_ids) {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}?{params}");
                 let response = self.send_request("GET", &url, self.headers_json(), None);
                 let Ok(response) = response else {
@@ -1375,7 +1383,7 @@ impl TwitterClient {
             let mut needs_refresh = false;
             let mut empty_page = None;
 
-            for query_id in query_ids {
+            for query_id in self.current_query_ids(operation_name, query_ids) {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}?{params}");
                 let response = self.fetch_with_retry("GET", &url, self.headers_json(), None);
                 let Ok(response) = response else {
@@ -1621,7 +1629,7 @@ impl TwitterClient {
 
         self.with_refreshed_query_ids_on_error(|| {
             let mut last_error = None;
-            for query_id in query_ids {
+            for query_id in self.current_query_ids(operation_name, query_ids) {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}?{params}");
                 let response = self.send_request("GET", &url, self.headers_json(), None);
                 let Ok(response) = response else {
@@ -2570,7 +2578,7 @@ impl TwitterClient {
         let mut refreshed = false;
         loop {
             let mut saw_refreshable_miss = false;
-            for query_id in query_ids {
+            for query_id in &self.current_query_ids(operation_name, query_ids) {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}?{params}");
                 let response =
                     self.send_request(method, &url, self.headers_json(), body.clone())?;
@@ -2635,7 +2643,13 @@ impl TwitterClient {
         {
             let transaction_id = self
                 .transaction_ids
-                .generate(&self.transport, &self.user_agent, method, url)
+                .generate_with_cookies(
+                    &self.transport,
+                    &self.user_agent,
+                    Some(&self.cookie_header()),
+                    method,
+                    url,
+                )
                 .unwrap_or_else(|_| random_transaction_id());
             headers.push(("x-client-transaction-id".into(), transaction_id));
         }
@@ -2767,6 +2781,13 @@ impl TwitterClient {
 
     fn query_id(&self, operation: &str) -> String {
         self.query_ids.get_query_id(operation).unwrap_or_default()
+    }
+
+    /// The ids to try for `operation_name`: `query_ids`, which callers build before a
+    /// request, behind the operation's current id. A retry after a query id refresh goes
+    /// through here so that it sends the refreshed id rather than the one that just failed.
+    fn current_query_ids(&self, operation_name: &str, query_ids: &[String]) -> Vec<String> {
+        with_current_query_id(self.query_id(operation_name), query_ids)
     }
 
     fn home_timeline_query_ids(&self) -> Vec<String> {
@@ -3024,6 +3045,14 @@ fn normalize_handle(value: &str) -> Option<String> {
 
 fn truncate(value: &str, max_len: usize) -> String {
     value.chars().take(max_len).collect()
+}
+
+fn with_current_query_id(current: String, query_ids: &[String]) -> Vec<String> {
+    unique(
+        std::iter::once(current)
+            .chain(query_ids.iter().cloned())
+            .collect(),
+    )
 }
 
 fn unique(values: Vec<String>) -> Vec<String> {
@@ -3529,6 +3558,7 @@ mod tests {
         MultipartField, TweetTimelinePage, bookmark_page_needs_empty_verification,
         bookmark_stop_cursor, bookmarks_variables, media_category_for_mime, multipart_form_data,
         status_update_input_from_create_tweet_variables, timeline_page_error,
+        with_current_query_id,
     };
 
     #[test]
@@ -3647,6 +3677,24 @@ mod tests {
         assert!(text.contains("APPEND"));
         assert!(text.contains("name=\"media\"; filename=\"media\""));
         assert!(text.contains("Content-Type: image/png"));
+    }
+
+    #[test]
+    fn retry_after_a_refresh_tries_the_refreshed_query_id_first() {
+        let before_refresh = vec!["old".to_owned(), "fallback".to_owned()];
+
+        assert_eq!(
+            with_current_query_id("old".into(), &before_refresh),
+            before_refresh
+        );
+        assert_eq!(
+            with_current_query_id("fresh".into(), &before_refresh),
+            vec!["fresh", "old", "fallback"]
+        );
+        assert_eq!(
+            with_current_query_id(String::new(), &before_refresh),
+            before_refresh
+        );
     }
 
     #[test]

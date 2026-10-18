@@ -208,7 +208,7 @@ fn build_fingerprint(
         hasher.update(&output.stdout);
         hasher.update(&output.stderr);
     }
-    format!("{:x}", hasher.finalize())
+    hex_digest(&hasher.finalize())
 }
 
 fn read_bytes(path: &Path) -> Vec<u8> {
@@ -480,7 +480,7 @@ fn sha256_file(path: &Path) -> String {
         }
         hasher.update(&buffer[..count]);
     }
-    format!("{:x}", hasher.finalize())
+    hex_digest(&hasher.finalize())
 }
 
 fn create_libcurl_alias(link_dir: &Path, curl_archive: &Path) {
@@ -608,4 +608,8 @@ fn run_output_command(command: &mut Command, description: &str) -> String {
     }
     String::from_utf8(output.stdout)
         .unwrap_or_else(|error| panic!("failed to decode {description} output: {error}"))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

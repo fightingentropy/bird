@@ -42,6 +42,20 @@ impl fmt::Debug for TwitterCookies {
     }
 }
 
+impl TwitterCookies {
+    /// The `Cookie` header for x.com requests, when both session cookies are present.
+    pub fn header(&self) -> Option<String> {
+        let (Some(auth_token), Some(ct0)) = (&self.auth_token, &self.ct0) else {
+            return None;
+        };
+        Some(
+            self.cookie_header
+                .clone()
+                .unwrap_or_else(|| format!("auth_token={auth_token}; ct0={ct0}")),
+        )
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ResolveCredentialsOptions {
     pub auth_token: Option<String>,

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{LazyLock, OnceLock, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{LazyLock, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -15,10 +15,17 @@ static BUNDLE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"https://abs\.twimg\.com/responsive-web/client-web(?:-legacy)?/[A-Za-z0-9.\-]+\.js")
         .expect("valid regex")
 });
-static CHUNK_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(\d+):"([^"]*bundle\.Bookmarks[^"]*)""#).expect("valid regex"));
+// Chunk ids are JS number literals, so 9000 is written `9e3`; match those whole.
+static CHUNK_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(\d+(?:e\d+)?):"([^"]*bundle\.Bookmarks[^"]*)""#).expect("valid regex")
+});
+/// Every named webpack chunk (`12345:"shared~bundle.Foo~bundle.Bar"`), for lazy discovery.
+static ANY_CHUNK_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(\d+(?:e\d+)?):"([A-Za-z0-9_.~/-]*(?:bundle|loader)\.[A-Za-z0-9_.~/-]+)""#)
+        .expect("valid regex")
+});
 static CHUNK_HASH_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(\d+):"([a-f0-9]{7,})""#).expect("valid regex"));
+    LazyLock::new(|| Regex::new(r#"(\d+(?:e\d+)?):"([a-f0-9]{7,})""#).expect("valid regex"));
 static CHUNK_SUFFIX_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"\}\)\[e\]\+"([^"]*\.js)""#).expect("valid regex"));
 static QUERY_ID_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
@@ -37,7 +44,29 @@ const DISCOVERY_PAGES: &[&str] = &[
     "https://x.com/notifications",
     "https://x.com/settings/profile",
 ];
+/// Signed in, x.com still serves the web client whose bundles carry the query ids;
+/// logged-out pages now serve a different client.
+const SIGNED_IN_DISCOVERY_PAGE: &str = "https://x.com/home";
 const DEFAULT_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+/// Lazily loaded chunks scanned at most per refresh, for operations the entry bundles lack.
+const MAX_LAZY_CHUNKS: usize = 600;
+/// Timeout for a page or entry bundle request.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+/// Lazy chunks are small CDN files; a slower response means a stalled network.
+const LAZY_CHUNK_TIMEOUT: Duration = Duration::from_secs(10);
+/// The lazy scan gives up after this many chunk requests in a row fail to connect.
+const MAX_LAZY_ERRORS: usize = 3;
+/// Upper bound for one whole discovery, so a stalled network cannot hold the refresh
+/// lock (and every caller waiting on it) for long.
+const DISCOVERY_BUDGET: Duration = Duration::from_secs(60);
+/// A successful refresh answers matching repeat requests for this long.
+const REFRESH_COOLDOWN: Duration = Duration::from_secs(60);
+/// A failed refresh answers matching repeat requests with the same error for this long.
+const FAILURE_COOLDOWN: Duration = Duration::from_secs(30);
+/// Operations X's current web client no longer ships. They are still recorded when a
+/// scanned bundle happens to carry them, but the lazy chunk scan does not keep going on
+/// their account.
+const RETIRED_OPERATIONS: &[&str] = &["AboutAccountQuery", "CreateFriendship", "DestroyFriendship"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Snapshot {
@@ -110,15 +139,78 @@ pub struct RuntimeQueryIdStore {
     cache_path: PathBuf,
     ttl: Duration,
     cached: OnceLock<RwLock<Option<Snapshot>>>,
+    last_attempt: Mutex<Option<RefreshAttempt>>,
+}
+
+/// What the last discovery looked for and found, so a repeat request it already covers
+/// is answered without going back to the network.
+struct RefreshAttempt {
+    at: Instant,
+    operations: BTreeSet<String>,
+    signed_in: bool,
+    /// Operations the discovery found.
+    found: BTreeSet<String>,
+    /// False when a required refresh stopped scanning before every expected operation was
+    /// found, so the rest were not searched for.
+    exhaustive: bool,
+    /// Why it failed, if it did.
+    error: Option<String>,
+}
+
+impl RefreshAttempt {
+    fn new(operations: &[String], signed_in: bool) -> Self {
+        Self {
+            at: Instant::now(),
+            operations: operations.iter().cloned().collect(),
+            signed_in,
+            found: BTreeSet::new(),
+            exhaustive: true,
+            error: None,
+        }
+    }
+
+    /// Whether this earlier attempt answers a new request, so repeating the discovery
+    /// would only repeat its outcome: the request asks for nothing the attempt did not
+    /// search for, and does not ask for a signed-in discovery the attempt was not.
+    fn answers(&self, request: &Self, required_operation: Option<&str>) -> bool {
+        let window = if self.error.is_some() {
+            FAILURE_COOLDOWN
+        } else {
+            REFRESH_COOLDOWN
+        };
+        if self.at.elapsed() >= window || (request.signed_in && !self.signed_in) {
+            return false;
+        }
+        let covers = request.operations.is_subset(&self.operations);
+        match (required_operation, self.error.is_some()) {
+            (Some(operation), false) => self.found.contains(operation),
+            (Some(operation), true) => covers && !self.found.contains(operation),
+            (None, false) => covers && self.exhaustive,
+            (None, true) => covers && self.found.is_empty(),
+        }
+    }
+}
+
+/// Time left for one discovery.
+#[derive(Clone, Copy)]
+struct Deadline(Instant);
+
+impl Deadline {
+    fn after(budget: Duration) -> Self {
+        Self(Instant::now() + budget)
+    }
+
+    /// Timeout for the next request: `cap`, or what is left of the budget if that is
+    /// less. `None` once the budget is spent.
+    fn timeout(self, cap: Duration) -> Option<Duration> {
+        let left = self.0.saturating_duration_since(Instant::now());
+        (!left.is_zero()).then(|| left.min(cap))
+    }
 }
 
 impl Default for RuntimeQueryIdStore {
     fn default() -> Self {
-        Self {
-            cache_path: default_cache_path(),
-            ttl: DEFAULT_TTL,
-            cached: OnceLock::new(),
-        }
+        Self::new(None, None)
     }
 }
 
@@ -128,6 +220,7 @@ impl RuntimeQueryIdStore {
             cache_path: cache_path.unwrap_or_else(default_cache_path),
             ttl: ttl.unwrap_or(DEFAULT_TTL),
             cached: OnceLock::new(),
+            last_attempt: Mutex::new(None),
         }
     }
 
@@ -177,7 +270,18 @@ impl RuntimeQueryIdStore {
         transport: &dyn HttpTransport,
         operations: &[String],
     ) -> anyhow::Result<QueryIdSnapshot> {
-        self.refresh_inner(transport, operations, None)
+        self.refresh_inner(transport, operations, None, None)
+    }
+
+    /// Like [`refresh`](Self::refresh), discovering from the signed-in web client when
+    /// `cookie_header` is given (logged-out pages no longer carry the query ids).
+    pub fn refresh_with_cookies(
+        &self,
+        transport: &dyn HttpTransport,
+        operations: &[String],
+        cookie_header: Option<&str>,
+    ) -> anyhow::Result<QueryIdSnapshot> {
+        self.refresh_inner(transport, operations, None, cookie_header)
     }
 
     pub fn refresh_required(
@@ -186,7 +290,22 @@ impl RuntimeQueryIdStore {
         operations: &[String],
         required_operation: &str,
     ) -> anyhow::Result<QueryIdSnapshot> {
-        self.refresh_inner(transport, operations, Some(required_operation))
+        self.refresh_inner(transport, operations, Some(required_operation), None)
+    }
+
+    pub fn refresh_required_with_cookies(
+        &self,
+        transport: &dyn HttpTransport,
+        operations: &[String],
+        required_operation: &str,
+        cookie_header: Option<&str>,
+    ) -> anyhow::Result<QueryIdSnapshot> {
+        self.refresh_inner(
+            transport,
+            operations,
+            Some(required_operation),
+            cookie_header,
+        )
     }
 
     fn refresh_inner(
@@ -194,9 +313,61 @@ impl RuntimeQueryIdStore {
         transport: &dyn HttpTransport,
         operations: &[String],
         required_operation: Option<&str>,
+        cookie_header: Option<&str>,
     ) -> anyhow::Result<QueryIdSnapshot> {
-        let bundle_urls = discover_bundles(transport)?;
-        let discovered = fetch_and_extract(transport, &bundle_urls, operations)?;
+        let mut attempt = RefreshAttempt::new(operations, cookie_header.is_some());
+        // Held for the whole discovery: callers that queue behind it get its outcome.
+        let mut last_attempt = self
+            .last_attempt
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(previous) = last_attempt
+            .as_ref()
+            .filter(|previous| previous.answers(&attempt, required_operation))
+        {
+            return match &previous.error {
+                Some(error) => Err(anyhow::anyhow!(
+                    "{error} (query id discovery failed recently; not retrying yet)"
+                )),
+                None => Ok(self.snapshot()),
+            };
+        }
+        let result = self.discover_and_store(
+            transport,
+            operations,
+            required_operation,
+            cookie_header,
+            &mut attempt,
+        );
+        attempt.at = Instant::now();
+        attempt.error = result.as_ref().err().map(|error| format!("{error:#}"));
+        *last_attempt = Some(attempt);
+        result
+    }
+
+    fn discover_and_store(
+        &self,
+        transport: &dyn HttpTransport,
+        operations: &[String],
+        required_operation: Option<&str>,
+        cookie_header: Option<&str>,
+        attempt: &mut RefreshAttempt,
+    ) -> anyhow::Result<QueryIdSnapshot> {
+        let deadline = Deadline::after(DISCOVERY_BUDGET);
+        let bundles = discover_bundles(transport, cookie_header, deadline)?;
+        let Extraction {
+            ids: discovered,
+            lazy_used,
+            exhaustive,
+        } = fetch_and_extract(
+            transport,
+            &bundles,
+            operations,
+            required_operation,
+            deadline,
+        )?;
+        attempt.found = discovered.keys().cloned().collect();
+        attempt.exhaustive = exhaustive;
         if discovered.is_empty() {
             anyhow::bail!("No GraphQL query IDs discovered; refusing to reuse a stale cache.");
         }
@@ -217,12 +388,11 @@ impl RuntimeQueryIdStore {
             ttl_ms: self.ttl.as_millis() as u64,
             ids,
             discovery: Discovery {
-                pages: DISCOVERY_PAGES
+                pages: bundles.pages,
+                bundles: bundles
+                    .entry
                     .iter()
-                    .map(|page| (*page).to_owned())
-                    .collect(),
-                bundles: bundle_urls
-                    .into_iter()
+                    .chain(&lazy_used)
                     .map(|url| url.rsplit('/').next().unwrap_or(url.as_str()).to_owned())
                     .collect(),
             },
@@ -256,36 +426,138 @@ pub fn target_query_id_operations() -> Vec<String> {
     fallback_query_ids().into_keys().collect()
 }
 
-fn discover_bundles(transport: &dyn HttpTransport) -> anyhow::Result<Vec<String>> {
-    let mut bundles = BTreeSet::new();
-    for page in DISCOVERY_PAGES {
-        let response = transport.send(&HttpRequest {
-            method: "GET".into(),
-            url: (*page).to_owned(),
-            headers: vec![
-                ("User-Agent".into(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36".into()),
-                ("Accept".into(), "text/html,application/json;q=0.9,*/*;q=0.8".into()),
-                ("Accept-Language".into(), "en-US,en;q=0.9".into()),
-            ],
-            body: None,
-            timeout: Some(Duration::from_secs(20)),
-        });
-        let Ok(response) = response else {
-            continue;
-        };
-        if !response.is_success() {
-            continue;
-        }
-        let body = response.text();
+/// Bundles to scan: `entry` (the page's scripts plus known lazy bookmark bundles) first,
+/// then `lazy` (every other named chunk, most likely first) for operations still missing.
+#[derive(Debug, Default)]
+struct DiscoveredBundles {
+    pages: Vec<String>,
+    entry: Vec<String>,
+    lazy: Vec<String>,
+}
+
+fn discover_bundles(
+    transport: &dyn HttpTransport,
+    cookie_header: Option<&str>,
+    deadline: Deadline,
+) -> anyhow::Result<DiscoveredBundles> {
+    let mut pages = Vec::new();
+    let mut entry = BTreeSet::new();
+    let mut lazy = BTreeSet::new();
+    // Records a loaded page; true once any bundle has been found.
+    let mut absorb = |url: &str, body: String| {
+        pages.push(url.to_owned());
         for capture in BUNDLE_RE.find_iter(&body) {
-            bundles.insert(capture.as_str().to_owned());
+            entry.insert(capture.as_str().to_owned());
         }
-        bundles.extend(discover_lazy_bookmark_bundles(&body));
+        entry.extend(discover_lazy_bookmark_bundles(&body));
+        lazy.extend(discover_lazy_chunks(&body));
+        !entry.is_empty()
+    };
+
+    let signed_in = cookie_header
+        .and_then(|_| {
+            fetch_discovery_page(transport, SIGNED_IN_DISCOVERY_PAGE, cookie_header, deadline)
+        })
+        .is_some_and(|body| absorb(SIGNED_IN_DISCOVERY_PAGE, body));
+    if !signed_in {
+        for page in DISCOVERY_PAGES {
+            if let Some(body) = fetch_discovery_page(transport, page, None, deadline)
+                && !absorb(page, body)
+            {
+                // A logged-out page that loads without any bundle is the new client,
+                // which carries none; the other pages would only redirect to login.
+                break;
+            }
+        }
     }
-    if bundles.is_empty() {
+    if entry.is_empty() && lazy.is_empty() {
+        if cookie_header.is_none() {
+            anyhow::bail!(
+                "No client bundles discovered; x.com only serves them to a signed-in session, or its layout changed."
+            );
+        }
         anyhow::bail!("No client bundles discovered; x.com layout may have changed.");
     }
-    Ok(bundles.into_iter().collect())
+    Ok(DiscoveredBundles {
+        pages,
+        lazy: prioritize_lazy_chunks(lazy.difference(&entry).cloned().collect()),
+        entry: entry.into_iter().collect(),
+    })
+}
+
+fn fetch_discovery_page(
+    transport: &dyn HttpTransport,
+    url: &str,
+    cookie_header: Option<&str>,
+    deadline: Deadline,
+) -> Option<String> {
+    let timeout = deadline.timeout(REQUEST_TIMEOUT)?;
+    let mut headers = vec![
+        ("User-Agent".into(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36".into()),
+        ("Accept".into(), "text/html,application/json;q=0.9,*/*;q=0.8".into()),
+        ("Accept-Language".into(), "en-US,en;q=0.9".into()),
+    ];
+    if let Some(cookie_header) = cookie_header {
+        headers.push(("Cookie".into(), cookie_header.to_owned()));
+    }
+    let response = transport
+        .send(&HttpRequest {
+            method: "GET".into(),
+            url: url.to_owned(),
+            headers,
+            body: None,
+            timeout: Some(timeout),
+        })
+        .ok()?;
+    response.is_success().then(|| response.text())
+}
+
+/// Every named chunk in the page's webpack chunk map, as a URL.
+fn discover_lazy_chunks(html: &str) -> Vec<String> {
+    let Some(base_url) = BUNDLE_RE
+        .find(html)
+        .and_then(|url| url.as_str().rsplit_once('/').map(|(base, _)| base))
+    else {
+        return Vec::new();
+    };
+    let suffix = CHUNK_SUFFIX_RE
+        .captures(html)
+        .and_then(|capture| capture.get(1))
+        .map_or("a.js", |value| value.as_str());
+    let hashes = chunk_hashes(html);
+    ANY_CHUNK_NAME_RE
+        .captures_iter(html)
+        .filter_map(|capture| {
+            let name = capture.get(2)?.as_str();
+            let hash = hashes.get(capture.get(1)?.as_str())?;
+            Some(format!("{base_url}/{name}.{hash}{suffix}"))
+        })
+        .collect()
+}
+
+/// Chunk id to content hash, from the page's webpack hash map.
+fn chunk_hashes(html: &str) -> BTreeMap<&str, &str> {
+    CHUNK_HASH_RE
+        .captures_iter(html)
+        .filter_map(|capture| Some((capture.get(1)?.as_str(), capture.get(2)?.as_str())))
+        .collect()
+}
+
+/// Bookmark and list chunks first (where bird's lazily loaded operations live), then
+/// shared chunks, then the rest.
+fn prioritize_lazy_chunks(mut urls: Vec<String>) -> Vec<String> {
+    let rank = |url: &str| {
+        let name = url.rsplit('/').next().unwrap_or(url);
+        if name.contains("Bookmark") || name.contains("List") {
+            0
+        } else if name.starts_with("shared~") {
+            1
+        } else {
+            2
+        }
+    };
+    urls.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.cmp(b)));
+    urls
 }
 
 fn discover_lazy_bookmark_bundles(html: &str) -> Vec<String> {
@@ -302,10 +574,7 @@ fn discover_lazy_bookmark_bundles(html: &str) -> Vec<String> {
     else {
         return Vec::new();
     };
-    let hashes = CHUNK_HASH_RE
-        .captures_iter(html)
-        .filter_map(|capture| Some((capture.get(1)?.as_str(), capture.get(2)?.as_str())))
-        .collect::<BTreeMap<_, _>>();
+    let hashes = chunk_hashes(html);
 
     CHUNK_NAME_RE
         .captures_iter(html)
@@ -320,35 +589,109 @@ fn discover_lazy_bookmark_bundles(html: &str) -> Vec<String> {
         .collect()
 }
 
+/// What a scan of the bundles found.
+struct Extraction {
+    ids: BTreeMap<String, String>,
+    /// Lazy chunks that contributed any of the ids.
+    lazy_used: Vec<String>,
+    /// False when a required refresh stopped before every expected operation was found.
+    exhaustive: bool,
+}
+
+/// Scan the entry bundles, then lazy chunks until every expected operation is found, or,
+/// for a required refresh, until the required one is. The lazy scan also stops when the
+/// budget runs out or the network stops answering.
 fn fetch_and_extract(
     transport: &dyn HttpTransport,
-    bundle_urls: &[String],
+    bundles: &DiscoveredBundles,
     operations: &[String],
-) -> anyhow::Result<BTreeMap<String, String>> {
+    required_operation: Option<&str>,
+    deadline: Deadline,
+) -> anyhow::Result<Extraction> {
     let targets = operations.iter().cloned().collect::<BTreeSet<_>>();
+    let expected = targets
+        .iter()
+        .filter(|operation| !RETIRED_OPERATIONS.contains(&operation.as_str()))
+        .collect::<Vec<_>>();
     let mut discovered = BTreeMap::new();
-    for bundle_url in bundle_urls {
+    let mut lazy_used = Vec::new();
+    for bundle_url in &bundles.entry {
         if discovered.len() == targets.len() {
             break;
         }
+        let Some(timeout) = deadline.timeout(REQUEST_TIMEOUT) else {
+            break;
+        };
         let response = transport.send(&HttpRequest {
             method: "GET".into(),
             url: bundle_url.clone(),
             headers: vec![],
             body: None,
-            timeout: Some(Duration::from_secs(20)),
+            timeout: Some(timeout),
         })?;
         if !response.is_success() {
             continue;
         }
-        let js = response.text();
-        for (operation_name, query_id) in extract_operations(&js, &QUERY_ID_PATTERNS) {
-            if targets.contains(&operation_name) && !discovered.contains_key(&operation_name) {
-                discovered.insert(operation_name, query_id);
+        extract_targets(&response.text(), &targets, &mut discovered);
+    }
+    let mut exhaustive = true;
+    let mut connect_errors = 0;
+    for chunk_url in bundles.lazy.iter().take(MAX_LAZY_CHUNKS) {
+        if expected
+            .iter()
+            .all(|operation| discovered.contains_key(*operation))
+        {
+            break;
+        }
+        if required_operation.is_some_and(|operation| discovered.contains_key(operation)) {
+            exhaustive = false;
+            break;
+        }
+        let Some(timeout) = deadline.timeout(LAZY_CHUNK_TIMEOUT) else {
+            break;
+        };
+        let Ok(response) = transport.send(&HttpRequest {
+            method: "GET".into(),
+            url: chunk_url.clone(),
+            headers: vec![],
+            body: None,
+            timeout: Some(timeout),
+        }) else {
+            connect_errors += 1;
+            if connect_errors >= MAX_LAZY_ERRORS {
+                break;
             }
+            continue;
+        };
+        connect_errors = 0;
+        if !response.is_success() {
+            continue;
+        }
+        if extract_targets(&response.text(), &targets, &mut discovered) {
+            lazy_used.push(chunk_url.clone());
         }
     }
-    Ok(discovered)
+    Ok(Extraction {
+        ids: discovered,
+        lazy_used,
+        exhaustive,
+    })
+}
+
+/// Record target operations found in `js`; true if any were new.
+fn extract_targets(
+    js: &str,
+    targets: &BTreeSet<String>,
+    discovered: &mut BTreeMap<String, String>,
+) -> bool {
+    let mut added = false;
+    for (operation_name, query_id) in extract_operations(js, &QUERY_ID_PATTERNS) {
+        if targets.contains(&operation_name) && !discovered.contains_key(&operation_name) {
+            discovered.insert(operation_name, query_id);
+            added = true;
+        }
+    }
+    added
 }
 
 fn extract_operations(js: &str, patterns: &[Regex]) -> Vec<(String, String)> {
@@ -482,10 +825,405 @@ mod tests {
 
     use crate::transport::{HttpRequest, HttpResponse, HttpTransport};
 
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::{
-        Discovery, RuntimeQueryIdStore, Snapshot, discover_lazy_bookmark_bundles,
-        extract_operations,
+        Deadline, DiscoveredBundles, Discovery, MAX_LAZY_ERRORS, RuntimeQueryIdStore,
+        SIGNED_IN_DISCOVERY_PAGE, Snapshot, chunk_hashes, discover_lazy_bookmark_bundles,
+        discover_lazy_chunks, extract_operations, fetch_and_extract, prioritize_lazy_chunks,
     };
+
+    /// Logged out, x.com serves the new client (no bundles); signed in, the web client
+    /// with a main bundle and a lazily loaded list chunk.
+    #[derive(Default)]
+    struct SignedInTransport {
+        anonymous_pages: AtomicUsize,
+        requests: AtomicUsize,
+    }
+
+    impl HttpTransport for SignedInTransport {
+        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            let signed_in = request.headers.iter().any(|(name, value)| {
+                name.eq_ignore_ascii_case("cookie") && value.contains("auth_token")
+            });
+            let body = if request.url.ends_with("/main.abcdef01.js") {
+                br#"e.exports={queryId:"home-id",operationName:"HomeTimeline"}"#.to_vec()
+            } else if request
+                .url
+                .ends_with("/shared~bundle.UserLists.1234567a.js")
+            {
+                br#"e.exports={queryId:"lists-id",operationName:"ListOwnerships"}"#.to_vec()
+            } else if request.url.ends_with(".js") {
+                Vec::new()
+            } else if request.url == SIGNED_IN_DISCOVERY_PAGE && signed_in {
+                br#"
+                    <script src="https://abs.twimg.com/responsive-web/client-web/main.abcdef01.js"></script>
+                    <script>t.u=e=>(({101:"bundle.Grok",202:"shared~bundle.UserLists"})[e]||e)
+                        +"."+({101:"7654321",202:"1234567"})[e]+"a.js"</script>
+                "#
+                .to_vec()
+            } else {
+                self.anonymous_pages.fetch_add(1, Ordering::SeqCst);
+                br#"<script type="module" src="https://abs.twimg.com/x-web/x-web/entry-client-logged-out.js"></script>"#
+                    .to_vec()
+            };
+            Ok(HttpResponse {
+                status: 200,
+                body,
+                ..HttpResponse::default()
+            })
+        }
+    }
+
+    #[test]
+    fn discovers_from_the_signed_in_page_and_lazy_chunks() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = RuntimeQueryIdStore::new(
+            Some(temp.path().join("query-ids.json")),
+            Some(Duration::from_secs(60)),
+        );
+        let transport = SignedInTransport::default();
+        let snapshot = store
+            .refresh_with_cookies(
+                &transport,
+                &["HomeTimeline".to_owned(), "ListOwnerships".to_owned()],
+                Some("auth_token=a; ct0=b"),
+            )
+            .expect("refresh");
+
+        assert_eq!(
+            snapshot.ids.get("HomeTimeline").map(String::as_str),
+            Some("home-id")
+        );
+        assert_eq!(
+            snapshot.ids.get("ListOwnerships").map(String::as_str),
+            Some("lists-id")
+        );
+        assert_eq!(transport.anonymous_pages.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn repeated_plain_refreshes_reuse_the_last_result() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = RuntimeQueryIdStore::new(
+            Some(temp.path().join("query-ids.json")),
+            Some(Duration::from_secs(60)),
+        );
+        let transport = SignedInTransport::default();
+        let operations = ["HomeTimeline".to_owned()];
+        store
+            .refresh_with_cookies(&transport, &operations, Some("auth_token=a; ct0=b"))
+            .expect("first refresh");
+        let after_first = transport.requests.load(Ordering::SeqCst);
+        store
+            .refresh_with_cookies(&transport, &operations, Some("auth_token=a; ct0=b"))
+            .expect("second refresh");
+        assert_eq!(transport.requests.load(Ordering::SeqCst), after_first);
+    }
+
+    #[test]
+    fn lists_every_named_chunk_and_ranks_likely_ones_first() {
+        let html = r#"<script src="https://abs.twimg.com/responsive-web/client-web/main.abcdef01.js"></script>
+            t.u=e=>(({1:"bundle.Grok",2:"shared~bundle.UserLists",3:"shared~bundle.AudioSpace",4:"i18n/en"})[e]||e)
+            +"."+({1:"aaaaaaa",2:"bbbbbbb",3:"ccccccc",4:"ddddddd"})[e]+"a.js""#;
+        let urls = prioritize_lazy_chunks(discover_lazy_chunks(html));
+        let names = urls
+            .iter()
+            .map(|url| url.rsplit('/').next().unwrap_or_default())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "shared~bundle.UserLists.bbbbbbba.js",
+                "shared~bundle.AudioSpace.ccccccca.js",
+                "bundle.Grok.aaaaaaaa.js",
+            ]
+        );
+    }
+
+    const COOKIE: Option<&str> = Some("auth_token=a; ct0=b");
+
+    /// A signed-in page listing `chunks` lazily loaded chunks, `shared~bundle.Chunk000`
+    /// onwards. `main.abcdef01.js` carries HomeTimeline; `bodies` gives other files' source.
+    struct ChunkTransport {
+        chunks: usize,
+        bodies: BTreeMap<&'static str, &'static str>,
+        chunk_errors: bool,
+        requests: Mutex<Vec<String>>,
+    }
+
+    impl ChunkTransport {
+        fn new(chunks: usize, bodies: &[(&'static str, &'static str)]) -> Self {
+            Self {
+                chunks,
+                bodies: bodies.iter().copied().collect(),
+                chunk_errors: false,
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn chunk_requests(&self) -> usize {
+            self.requests
+                .lock()
+                .expect("requests")
+                .iter()
+                .filter(|url| url.contains("shared~bundle.Chunk"))
+                .count()
+        }
+    }
+
+    impl HttpTransport for ChunkTransport {
+        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            self.requests
+                .lock()
+                .expect("requests")
+                .push(request.url.clone());
+            if self.chunk_errors && request.url.contains("shared~bundle.Chunk") {
+                anyhow::bail!("connection timed out");
+            }
+            let body = if request.url == SIGNED_IN_DISCOVERY_PAGE {
+                let names = (0..self.chunks)
+                    .map(|index| format!(r#"{}:"shared~bundle.Chunk{index:03}""#, 1000 + index))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let hashes = (0..self.chunks)
+                    .map(|index| format!(r#"{}:"{index:07x}""#, 1000 + index))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    r#"<script src="https://abs.twimg.com/responsive-web/client-web/main.abcdef01.js"></script>
+                    <script>t.u=e=>(({{{names}}})[e]||e)+"."+({{{hashes}}})[e]+"a.js"</script>"#
+                )
+                .into_bytes()
+            } else if request.url.ends_with("/main.abcdef01.js") {
+                br#"e.exports={queryId:"home-id",operationName:"HomeTimeline"}"#.to_vec()
+            } else {
+                self.bodies
+                    .iter()
+                    .find(|(suffix, _)| request.url.contains(*suffix))
+                    .map(|(_, body)| body.as_bytes().to_vec())
+                    .unwrap_or_default()
+            };
+            Ok(HttpResponse {
+                status: 200,
+                body,
+                ..HttpResponse::default()
+            })
+        }
+    }
+
+    const LISTS_BODY: &str = r#"e.exports={queryId:"lists-id",operationName:"ListOwnerships"}"#;
+
+    fn temp_store(temp: &tempfile::TempDir) -> RuntimeQueryIdStore {
+        RuntimeQueryIdStore::new(
+            Some(temp.path().join("query-ids.json")),
+            Some(Duration::from_secs(60)),
+        )
+    }
+
+    fn names(operations: &[&str]) -> Vec<String> {
+        operations.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn lazy_scan_stops_once_the_expected_operations_are_found() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let transport = ChunkTransport::new(40, &[("Chunk003", LISTS_BODY)]);
+        // AboutAccountQuery is retired: its absence must not keep the scan going.
+        let snapshot = temp_store(&temp)
+            .refresh_with_cookies(
+                &transport,
+                &names(&["HomeTimeline", "ListOwnerships", "AboutAccountQuery"]),
+                COOKIE,
+            )
+            .expect("refresh");
+
+        assert_eq!(snapshot.ids.len(), 2);
+        assert_eq!(transport.chunk_requests(), 4);
+    }
+
+    #[test]
+    fn required_refresh_skips_the_lazy_scan_when_the_entry_bundles_have_it() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = temp_store(&temp);
+        let transport = ChunkTransport::new(40, &[("Chunk003", LISTS_BODY)]);
+        let operations = names(&["HomeTimeline", "ListOwnerships"]);
+
+        store
+            .refresh_required_with_cookies(&transport, &operations, "HomeTimeline", COOKIE)
+            .expect("required refresh");
+        assert_eq!(transport.chunk_requests(), 0);
+
+        // It did not search for the rest, so a plain refresh is not answered by it ...
+        let snapshot = store
+            .refresh_with_cookies(&transport, &operations, COOKIE)
+            .expect("plain refresh");
+        assert_eq!(transport.chunk_requests(), 4);
+        assert!(snapshot.ids.contains_key("ListOwnerships"));
+
+        // ... while a repeat of the required refresh is.
+        let requests = transport.requests.lock().expect("requests").len();
+        store
+            .refresh_required_with_cookies(&transport, &operations, "HomeTimeline", COOKIE)
+            .expect("repeat required refresh");
+        assert_eq!(transport.requests.lock().expect("requests").len(), requests);
+    }
+
+    #[test]
+    fn required_refresh_scans_lazy_chunks_only_until_it_finds_the_operation() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let transport = ChunkTransport::new(40, &[("Chunk002", LISTS_BODY)]);
+        let snapshot = temp_store(&temp)
+            .refresh_required_with_cookies(
+                &transport,
+                &names(&["HomeTimeline", "ListOwnerships", "Likes"]),
+                "ListOwnerships",
+                COOKIE,
+            )
+            .expect("required refresh");
+
+        assert!(snapshot.ids.contains_key("ListOwnerships"));
+        assert_eq!(transport.chunk_requests(), 3);
+    }
+
+    #[test]
+    fn repeat_refresh_for_other_operations_is_not_answered_from_the_cooldown() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = temp_store(&temp);
+        let transport = ChunkTransport::new(5, &[("Chunk001", LISTS_BODY)]);
+
+        store
+            .refresh_with_cookies(&transport, &names(&["HomeTimeline"]), COOKIE)
+            .expect("first refresh");
+        let snapshot = store
+            .refresh_with_cookies(&transport, &names(&["ListOwnerships"]), COOKIE)
+            .expect("second refresh");
+
+        assert!(snapshot.ids.contains_key("ListOwnerships"));
+    }
+
+    #[test]
+    fn signed_in_refresh_is_not_answered_by_a_logged_out_one() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = temp_store(&temp);
+        let transport = SignedInTransport::default();
+        let operations = names(&["HomeTimeline"]);
+
+        let error = store
+            .refresh_with_cookies(&transport, &operations, None)
+            .expect_err("the logged-out client carries no bundles");
+        assert!(error.to_string().contains("signed-in session"));
+        // Logged out, the first page without bundles ends the search.
+        assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
+
+        store
+            .refresh_with_cookies(&transport, &operations, COOKIE)
+            .expect("signed-in refresh");
+    }
+
+    #[test]
+    fn failed_refresh_is_not_repeated_right_away() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let store = temp_store(&temp);
+        let transport = ChunkTransport::new(0, &[]);
+        let operations = names(&["Likes"]);
+
+        let first = store
+            .refresh_with_cookies(&transport, &operations, COOKIE)
+            .expect_err("nothing to discover");
+        assert!(
+            first
+                .to_string()
+                .contains("No GraphQL query IDs discovered")
+        );
+        let requests = transport.requests.lock().expect("requests").len();
+
+        let second = store
+            .refresh_with_cookies(&transport, &operations, COOKIE)
+            .expect_err("failure is remembered");
+        assert!(
+            second
+                .to_string()
+                .contains("No GraphQL query IDs discovered")
+        );
+        assert!(second.to_string().contains("not retrying yet"));
+        assert_eq!(transport.requests.lock().expect("requests").len(), requests);
+
+        // Other operations may still be found, so they are not turned away.
+        store
+            .refresh_with_cookies(&transport, &names(&["HomeTimeline"]), COOKIE)
+            .expect("a different request runs");
+    }
+
+    #[test]
+    fn lazy_scan_gives_up_when_the_network_stops_answering() {
+        let temp = tempfile::tempdir().expect("temp directory");
+        let mut transport = ChunkTransport::new(100, &[]);
+        transport.chunk_errors = true;
+
+        let snapshot = temp_store(&temp)
+            .refresh_with_cookies(
+                &transport,
+                &names(&["HomeTimeline", "ListOwnerships"]),
+                COOKIE,
+            )
+            .expect("the entry bundle still yields HomeTimeline");
+
+        assert!(snapshot.ids.contains_key("HomeTimeline"));
+        assert_eq!(transport.chunk_requests(), MAX_LAZY_ERRORS);
+    }
+
+    #[test]
+    fn discovery_makes_no_request_once_its_budget_is_spent() {
+        let transport = ChunkTransport::new(5, &[]);
+        let bundles = DiscoveredBundles {
+            pages: Vec::new(),
+            entry: vec!["https://abs.twimg.com/responsive-web/client-web/main.abcdef01.js".into()],
+            lazy: vec![
+                "https://abs.twimg.com/responsive-web/client-web/shared~bundle.Chunk000.0000000a.js"
+                    .into(),
+            ],
+        };
+
+        let extraction = fetch_and_extract(
+            &transport,
+            &bundles,
+            &names(&["HomeTimeline"]),
+            None,
+            Deadline::after(Duration::ZERO),
+        )
+        .expect("extraction");
+
+        assert!(extraction.ids.is_empty());
+        assert!(transport.requests.lock().expect("requests").is_empty());
+    }
+
+    #[test]
+    fn chunk_ids_in_exponent_notation_keep_their_own_hash() {
+        // 9000 and 79000 are minified to `9e3` and `79e3`: both must not collapse into `3`.
+        let html = r#"<script src="https://abs.twimg.com/responsive-web/client-web/main.abcdef01.js"></script>
+            t.u=e=>(({9e3:"loader.SignupModule",79e3:"bundle.Grok",5:"bundle.Home"})[e]||e)
+            +"."+({9e3:"aaaaaaaaaaaaaaaa",79e3:"bbbbbbbbbbbbbbbb",5:"ccccccc"})[e]+"a.js""#;
+
+        assert_eq!(
+            chunk_hashes(html),
+            BTreeMap::from([
+                ("9e3", "aaaaaaaaaaaaaaaa"),
+                ("79e3", "bbbbbbbbbbbbbbbb"),
+                ("5", "ccccccc")
+            ])
+        );
+        let urls = discover_lazy_chunks(html);
+        for expected in [
+            "/loader.SignupModule.aaaaaaaaaaaaaaaaa.js",
+            "/bundle.Grok.bbbbbbbbbbbbbbbba.js",
+            "/bundle.Home.ccccccca.js",
+        ] {
+            assert!(urls.iter().any(|url| url.ends_with(expected)), "{urls:?}");
+        }
+    }
 
     struct QueryIdTransport;
     struct EmptyQueryIdTransport;

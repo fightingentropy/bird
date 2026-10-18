@@ -769,7 +769,7 @@ fn run() -> CliResult<()> {
             json,
             json_full,
         ),
-        Commands::QueryIds { json, fresh } => run_query_ids(json, fresh),
+        Commands::QueryIds { json, fresh } => run_query_ids(&context, &cli.global, json, fresh),
         Commands::Home {
             count,
             following,
@@ -1539,12 +1539,29 @@ fn run_news(
     Ok(())
 }
 
-fn run_query_ids(json_output: bool, fresh: bool) -> CliResult<()> {
+fn run_query_ids(
+    context: &CliContext,
+    global: &GlobalOptions,
+    json_output: bool,
+    fresh: bool,
+) -> CliResult<()> {
     let transport = transport_from_env();
     let store = RuntimeQueryIdStore::default();
     if fresh {
+        // The query ids live in the signed-in web client; logged-out pages no longer carry them.
+        let cookie_header = match context.resolve_credentials(global) {
+            Ok(resolved) => resolved.cookies.header(),
+            Err(_) => None,
+        };
+        if cookie_header.is_none() {
+            eprintln!("[warn] No X session found; discovering from logged-out pages only.");
+        }
         eprintln!("[info] Refreshing GraphQL query IDs...");
-        let _ = store.refresh(&transport, &target_query_id_operations())?;
+        let _ = store.refresh_with_cookies(
+            &transport,
+            &target_query_id_operations(),
+            cookie_header.as_deref(),
+        )?;
         eprintln!("[info] Refreshing feature overrides...");
         let _ = refresh_features_cache()?;
     }
