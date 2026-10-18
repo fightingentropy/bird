@@ -11,7 +11,7 @@
   "documentDescribes": [
     "SPDXRef-Application-bird"
   ],
-  "documentNamespace": "https://github.com/fightingentropy/bird/sbom/v0.1.4/292bfa2d402d9501823823026e24e8024eacd00ecd3698e9d275d1a4d9893fae",
+  "documentNamespace": "https://github.com/fightingentropy/bird/sbom/v0.1.5/b5b2d19dbcfc681689eaa127fa307839bac8511e78f6ff638aa9dadfe5605fea",
   "hasExtractedLicensingInfos": [
     {
       "extractedText": "BoringSSL contains ISC-style and historical OpenSSL/SSLeay terms; see LICENSE in the pinned BoringSSL source archive.",
@@ -19,7 +19,7 @@
       "name": "BoringSSL bundled license terms"
     }
   ],
-  "name": "bird-0.1.4",
+  "name": "bird-0.1.5",
   "packages": [
     {
       "SPDXID": "SPDXRef-Application-bird",
@@ -28,7 +28,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:github/fightingentropy/bird@v0.1.4",
+          "referenceLocator": "pkg:github/fightingentropy/bird@v0.1.5",
           "referenceType": "purl"
         }
       ],
@@ -36,7 +36,7 @@
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
       "name": "bird",
-      "versionInfo": "0.1.4"
+      "versionInfo": "0.1.5"
     },
     {
       "SPDXID": "SPDXRef-Cargo-aes-0.8.4",
@@ -545,13 +545,13 @@
       "versionInfo": "0.22.1"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-bird-cli-0.1.4",
+      "SPDXID": "SPDXRef-Cargo-bird-cli-0.1.5",
       "copyrightText": "NOASSERTION",
       "downloadLocation": "NOASSERTION",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/bird-cli@0.1.4",
+          "referenceLocator": "pkg:cargo/bird-cli@0.1.5",
           "referenceType": "purl"
         }
       ],
@@ -559,16 +559,16 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "bird-cli",
-      "versionInfo": "0.1.4"
+      "versionInfo": "0.1.5"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-bird-core-0.1.4",
+      "SPDXID": "SPDXRef-Cargo-bird-core-0.1.5",
       "copyrightText": "NOASSERTION",
       "downloadLocation": "NOASSERTION",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/bird-core@0.1.4",
+          "referenceLocator": "pkg:cargo/bird-core@0.1.5",
           "referenceType": "purl"
         }
       ],
@@ -576,16 +576,16 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "bird-core",
-      "versionInfo": "0.1.4"
+      "versionInfo": "0.1.5"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-bird-curl-impersonate-sys-0.1.4",
+      "SPDXID": "SPDXRef-Cargo-bird-curl-impersonate-sys-0.1.5",
       "copyrightText": "NOASSERTION",
       "downloadLocation": "NOASSERTION",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/bird-curl-impersonate-sys@0.1.4",
+          "referenceLocator": "pkg:cargo/bird-curl-impersonate-sys@0.1.5",
           "referenceType": "purl"
         }
       ],
@@ -593,7 +593,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "bird-curl-impersonate-sys",
-      "versionInfo": "0.1.4"
+      "versionInfo": "0.1.5"
     },
     {
       "SPDXID": "SPDXRef-Cargo-bitflags-2.11.0",
@@ -4782,13 +4782,13 @@
       "versionInfo": "2.6.1"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-sweet-cookie-0.1.4",
+      "SPDXID": "SPDXRef-Cargo-sweet-cookie-0.1.5",
       "copyrightText": "NOASSERTION",
       "downloadLocation": "NOASSERTION",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/sweet-cookie@0.1.4",
+          "referenceLocator": "pkg:cargo/sweet-cookie@0.1.5",
           "referenceType": "purl"
         }
       ],
@@ -4796,7 +4796,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "sweet-cookie",
-      "versionInfo": "0.1.4"
+      "versionInfo": "0.1.5"
     },
     {
       "SPDXID": "SPDXRef-Cargo-syn-2.0.117",
@@ -6406,17 +6406,17 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-bird-cli-0.1.4",
+      "relatedSpdxElement": "SPDXRef-Cargo-bird-cli-0.1.5",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-bird-core-0.1.4",
+      "relatedSpdxElement": "SPDXRef-Cargo-bird-core-0.1.5",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-bird-curl-impersonate-sys-0.1.4",
+      "relatedSpdxElement": "SPDXRef-Cargo-bird-curl-impersonate-sys-0.1.5",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
@@ -7331,7 +7331,7 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-sweet-cookie-0.1.4",
+      "relatedSpdxElement": "SPDXRef-Cargo-sweet-cookie-0.1.5",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
