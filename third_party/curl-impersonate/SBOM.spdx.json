@@ -11,7 +11,7 @@
   "documentDescribes": [
     "SPDXRef-Application-bird"
   ],
-  "documentNamespace": "https://github.com/fightingentropy/bird/sbom/v0.1.4/c3a311ec09bf8cf409b51f976bd681784f3265560ced90258075313e7fdd2e3c",
+  "documentNamespace": "https://github.com/fightingentropy/bird/sbom/v0.1.4/292bfa2d402d9501823823026e24e8024eacd00ecd3698e9d275d1a4d9893fae",
   "hasExtractedLicensingInfos": [
     {
       "extractedText": "BoringSSL contains ISC-style and historical OpenSSL/SSLeay terms; see LICENSE in the pinned BoringSSL source archive.",
@@ -642,6 +642,29 @@
       "versionInfo": "0.10.4"
     },
     {
+      "SPDXID": "SPDXRef-Cargo-block-buffer-0.12.1",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:cargo/block-buffer@0.12.1",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "block-buffer",
+      "versionInfo": "0.12.1"
+    },
+    {
       "SPDXID": "SPDXRef-Cargo-block-padding-0.3.3",
       "checksums": [
         {
@@ -964,6 +987,29 @@
       "versionInfo": "2.5.0"
     },
     {
+      "SPDXID": "SPDXRef-Cargo-const-oid-0.10.2",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:cargo/const-oid@0.10.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "const-oid",
+      "versionInfo": "0.10.2"
+    },
+    {
       "SPDXID": "SPDXRef-Cargo-core-foundation-0.10.1",
       "checksums": [
         {
@@ -1033,6 +1079,29 @@
       "versionInfo": "0.2.17"
     },
     {
+      "SPDXID": "SPDXRef-Cargo-cpufeatures-0.3.0",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:cargo/cpufeatures@0.3.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "cpufeatures",
+      "versionInfo": "0.3.0"
+    },
+    {
       "SPDXID": "SPDXRef-Cargo-crossbeam-utils-0.8.22",
       "checksums": [
         {
@@ -1077,6 +1146,29 @@
       "licenseDeclared": "NOASSERTION",
       "name": "crypto-common",
       "versionInfo": "0.1.7"
+    },
+    {
+      "SPDXID": "SPDXRef-Cargo-crypto-common-0.2.2",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:cargo/crypto-common@0.2.2",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "crypto-common",
+      "versionInfo": "0.2.2"
     },
     {
       "SPDXID": "SPDXRef-Cargo-cssparser-0.37.0",
@@ -1238,6 +1330,29 @@
       "licenseDeclared": "NOASSERTION",
       "name": "digest",
       "versionInfo": "0.10.7"
+    },
+    {
+      "SPDXID": "SPDXRef-Cargo-digest-0.11.3",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:cargo/digest@0.11.3",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "digest",
+      "versionInfo": "0.11.3"
     },
     {
       "SPDXID": "SPDXRef-Cargo-dirs-6.0.0",
@@ -2135,6 +2250,29 @@
       "licenseDeclared": "NOASSERTION",
       "name": "html5ever",
       "versionInfo": "0.39.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Cargo-hybrid-array-0.4.14",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "707114b52a152fa7bdb290cd7cd5912d9467273b6d74e21b8d81aca1f8533f6b"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:cargo/hybrid-array@0.4.14",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "hybrid-array",
+      "versionInfo": "0.4.14"
     },
     {
       "SPDXID": "SPDXRef-Cargo-icu-collections-2.1.1",
@@ -4368,6 +4506,29 @@
       "versionInfo": "0.10.9"
     },
     {
+      "SPDXID": "SPDXRef-Cargo-sha2-0.11.0",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+        }
+      ],
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceLocator": "pkg:cargo/sha2@0.11.0",
+          "referenceType": "purl"
+        }
+      ],
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "sha2",
+      "versionInfo": "0.11.0"
+    },
+    {
       "SPDXID": "SPDXRef-Cargo-shlex-1.3.0",
       "checksums": [
         {
@@ -4960,11 +5121,11 @@
       "versionInfo": "0.1.36"
     },
     {
-      "SPDXID": "SPDXRef-Cargo-typenum-1.19.0",
+      "SPDXID": "SPDXRef-Cargo-typenum-1.20.1",
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
+          "checksumValue": "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
         }
       ],
       "copyrightText": "NOASSERTION",
@@ -4972,7 +5133,7 @@
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
-          "referenceLocator": "pkg:cargo/typenum@1.19.0",
+          "referenceLocator": "pkg:cargo/typenum@1.20.1",
           "referenceType": "purl"
         }
       ],
@@ -4980,7 +5141,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "name": "typenum",
-      "versionInfo": "1.19.0"
+      "versionInfo": "1.20.1"
     },
     {
       "SPDXID": "SPDXRef-Cargo-ucd-trie-0.1.7",
@@ -6270,6 +6431,11 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
+      "relatedSpdxElement": "SPDXRef-Cargo-block-buffer-0.12.1",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Application-bird"
+    },
+    {
       "relatedSpdxElement": "SPDXRef-Cargo-block-padding-0.3.3",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
@@ -6340,6 +6506,11 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
+      "relatedSpdxElement": "SPDXRef-Cargo-const-oid-0.10.2",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Application-bird"
+    },
+    {
       "relatedSpdxElement": "SPDXRef-Cargo-core-foundation-0.10.1",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
@@ -6355,12 +6526,22 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
+      "relatedSpdxElement": "SPDXRef-Cargo-cpufeatures-0.3.0",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Application-bird"
+    },
+    {
       "relatedSpdxElement": "SPDXRef-Cargo-crossbeam-utils-0.8.22",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
       "relatedSpdxElement": "SPDXRef-Cargo-crypto-common-0.1.7",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Application-bird"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Cargo-crypto-common-0.2.2",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
@@ -6396,6 +6577,11 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Cargo-digest-0.10.7",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Application-bird"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Cargo-digest-0.11.3",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
@@ -6591,6 +6777,11 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Cargo-html5ever-0.39.0",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Application-bird"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Cargo-hybrid-array-0.4.14",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
@@ -7080,6 +7271,11 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
+      "relatedSpdxElement": "SPDXRef-Cargo-sha2-0.11.0",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Application-bird"
+    },
+    {
       "relatedSpdxElement": "SPDXRef-Cargo-shlex-1.3.0",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
@@ -7210,7 +7406,7 @@
       "spdxElementId": "SPDXRef-Application-bird"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Cargo-typenum-1.19.0",
+      "relatedSpdxElement": "SPDXRef-Cargo-typenum-1.20.1",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Application-bird"
     },
