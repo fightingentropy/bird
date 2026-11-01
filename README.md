@@ -275,3 +275,9 @@ workflows attest each archive and checksum before publishing; verify a downloade
 gh attestation verify bird-v0.1.5-aarch64-apple-darwin.tar.gz \
   --repo fightingentropy/bird
 ```
+
+## Credits
+
+- The `sweet-cookie` crate is a Rust port of Peter Steinberger's [sweet-cookie](https://github.com/steipete/sweet-cookie) (MIT).
+- The `bird` commands, aliases, and most flags follow Peter Steinberger's [`@steipete/bird`](https://www.npmjs.com/package/@steipete/bird) CLI (MIT).
+- The vendored macOS transport builds [curl-impersonate](https://github.com/lexiforest/curl-impersonate) v1.5.1 (MIT), an active fork of [lwthiker/curl-impersonate](https://github.com/lwthiker/curl-impersonate). Its license is kept in `third_party/curl-impersonate/LICENSE`.
