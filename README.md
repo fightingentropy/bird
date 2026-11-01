@@ -2,6 +2,8 @@
 
 Fast X/Twitter CLI in Rust.
 
+> Unofficial and not affiliated with X Corp. `bird` uses your own browser session, and automated use may breach X's terms of service.
+
 `bird` reads your existing browser session, talks to X with browser-like requests, and gives you a native CLI for timelines, tweets, profiles, lists, and common account actions.
 
 ## Highlights
