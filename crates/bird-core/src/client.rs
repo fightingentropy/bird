@@ -2803,18 +2803,18 @@ impl TwitterClient {
     }
 
     fn follow_query_ids(&self, follow: bool) -> Vec<String> {
-        if follow {
-            return unique(vec![
-                self.query_id("CreateFriendship"),
-                "8h9JVdV8dlSyqyRDJEPCsA".into(),
-                "OPwKc1HXnBT_bWXfAlo-9g".into(),
-            ]);
-        }
-        unique(vec![
-            self.query_id("DestroyFriendship"),
-            "ppXWuagMNXgvzx6WoXBW0Q".into(),
-            "8h9JVdV8dlSyqyRDJEPCsA".into(),
-        ])
+        let operation = if follow {
+            "CreateFriendship"
+        } else {
+            "DestroyFriendship"
+        };
+        let mut ids = vec![self.query_id(operation)];
+        ids.extend(
+            follow_fallback_query_ids(follow)
+                .iter()
+                .map(|id| (*id).to_owned()),
+        );
+        unique(ids)
     }
 
     fn likes_query_ids(&self) -> Vec<String> {
@@ -3447,6 +3447,17 @@ fn multipart_form_data(fields: &[MultipartField]) -> (Vec<u8>, String) {
     (body, boundary)
 }
 
+/// Built-in fallback query ids per operation. Each list must only hold ids of
+/// that operation: a Create id posted to the Destroy endpoint (or the reverse)
+/// must never be tried.
+fn follow_fallback_query_ids(follow: bool) -> &'static [&'static str] {
+    if follow {
+        &["8h9JVdV8dlSyqyRDJEPCsA", "OPwKc1HXnBT_bWXfAlo-9g"]
+    } else {
+        &["ppXWuagMNXgvzx6WoXBW0Q"]
+    }
+}
+
 /// Longest `Retry-After` wait the client will sleep through before retrying.
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
 
@@ -3651,9 +3662,10 @@ mod tests {
     use super::{
         MediaProcessingInfo, MultipartField, TweetTimelinePage,
         bookmark_page_needs_empty_verification, bookmark_stop_cursor, bookmarks_variables,
-        collect_user_tweets, media_category_for_mime, multipart_form_data, poll_media_processing,
-        retry_backoff, status_update_input_from_create_tweet_variables, timeline_page_error,
-        tweet_id_sort_key, user_lookup_failure, user_lookup_status_is_fatal, with_current_query_id,
+        collect_user_tweets, follow_fallback_query_ids, media_category_for_mime,
+        multipart_form_data, poll_media_processing, retry_backoff,
+        status_update_input_from_create_tweet_variables, timeline_page_error, tweet_id_sort_key,
+        user_lookup_failure, user_lookup_status_is_fatal, with_current_query_id,
     };
 
     #[test]
@@ -3962,5 +3974,13 @@ mod tests {
             Some(Duration::from_secs(30))
         );
         assert_eq!(retry_backoff(Some("900"), default), None);
+    }
+
+    #[test]
+    fn unfollow_fallbacks_do_not_include_follow_query_ids() {
+        let follow = follow_fallback_query_ids(true);
+        let unfollow = follow_fallback_query_ids(false);
+        assert!(!unfollow.is_empty());
+        assert!(unfollow.iter().all(|id| !follow.contains(id)));
     }
 }
