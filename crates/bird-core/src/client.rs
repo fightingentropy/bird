@@ -3546,7 +3546,14 @@ fn user_lookup_failure(response: &crate::transport::HttpResponse) -> String {
     format!(
         "HTTP {}: {}",
         response.status,
-        truncate(&response.text(), 200)
+        truncate(
+            &response
+                .text()
+                .chars()
+                .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
+                .collect::<String>(),
+            200
+        )
     )
 }
 
@@ -4109,6 +4116,12 @@ mod tests {
             user_lookup_failure(&response),
             "HTTP 429: Rate limit exceeded"
         );
+        let hostile = crate::transport::HttpResponse {
+            status: 403,
+            headers: Default::default(),
+            body: b"\x1b]0;pwn\x07\x1b[2Jdenied".to_vec(),
+        };
+        assert_eq!(user_lookup_failure(&hostile), "HTTP 403: ]0;pwn[2Jdenied");
     }
 
     #[test]
