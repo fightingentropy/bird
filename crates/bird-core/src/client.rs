@@ -587,6 +587,7 @@ impl TwitterClient {
 
         self.with_refreshed_query_ids_on_error(|| {
             let mut last_error = None;
+            let mut needs_refresh = false;
             for query_id in self.about_account_query_ids() {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/AboutAccountQuery?{params}");
                 let response = self.send_request("GET", &url, self.headers_json(), None);
@@ -595,14 +596,17 @@ impl TwitterClient {
                     continue;
                 };
                 if response.status == 404 {
+                    needs_refresh = true;
                     last_error = Some("HTTP 404".to_owned());
                     continue;
                 }
                 if !response.is_success() {
+                    let body = response.text();
+                    needs_refresh |= message_suggests_stale_query_id(&body);
                     last_error = Some(format!(
                         "HTTP {}: {}",
                         response.status,
-                        truncate(&response.text(), 200)
+                        truncate(&body, 200)
                     ));
                     continue;
                 }
@@ -611,7 +615,9 @@ impl TwitterClient {
                     needs_refresh: false,
                 })?;
                 if let Some(errors) = data.get("errors").and_then(Value::as_array) {
-                    last_error = Some(format_errors(errors));
+                    let message = format_errors(errors);
+                    needs_refresh |= message_suggests_stale_query_id(&message);
+                    last_error = Some(message);
                     continue;
                 }
                 let about_profile = data
@@ -649,7 +655,7 @@ impl TwitterClient {
             Err(RefreshableError {
                 message: last_error
                     .unwrap_or_else(|| "Unknown error fetching account details".to_owned()),
-                needs_refresh: true,
+                needs_refresh,
             })
         })
         .map_err(anyhow::Error::msg)
@@ -1221,6 +1227,7 @@ impl TwitterClient {
 
         self.with_refreshed_query_ids_on_error(|| {
             let mut last_error = None;
+            let mut needs_refresh = false;
             for query_id in self.current_query_ids(operation_name, query_ids) {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}?{params}");
                 let response = self.send_request("GET", &url, self.headers_json(), None);
@@ -1229,14 +1236,17 @@ impl TwitterClient {
                     continue;
                 };
                 if response.status == 404 {
+                    needs_refresh = true;
                     last_error = Some("HTTP 404".to_owned());
                     continue;
                 }
                 if !response.is_success() {
+                    let body = response.text();
+                    needs_refresh |= message_suggests_stale_query_id(&body);
                     last_error = Some(format!(
                         "HTTP {}: {}",
                         response.status,
-                        truncate(&response.text(), 200)
+                        truncate(&body, 200)
                     ));
                     continue;
                 }
@@ -1258,7 +1268,9 @@ impl TwitterClient {
                 if instructions.is_none()
                     && let Some(errors) = data.get("errors").and_then(Value::as_array)
                 {
-                    last_error = Some(format_errors(errors));
+                    let message = format_errors(errors);
+                    needs_refresh |= message_suggests_stale_query_id(&message);
+                    last_error = Some(message);
                     continue;
                 }
                 return Ok(parse_lists_from_instructions(instructions));
@@ -1267,7 +1279,7 @@ impl TwitterClient {
             Err(RefreshableError {
                 message: last_error
                     .unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
-                needs_refresh: true,
+                needs_refresh,
             })
         })
         .map_err(anyhow::Error::msg)
@@ -1603,6 +1615,7 @@ impl TwitterClient {
 
         self.with_refreshed_query_ids_on_error(|| {
             let mut last_error = None;
+            let mut needs_refresh = false;
             for query_id in self.current_query_ids(operation_name, query_ids) {
                 let url = format!("{TWITTER_API_BASE}/{query_id}/{operation_name}?{params}");
                 let response = self.send_request("GET", &url, self.headers_json(), None);
@@ -1611,14 +1624,17 @@ impl TwitterClient {
                     continue;
                 };
                 if response.status == 404 {
+                    needs_refresh = true;
                     last_error = Some("HTTP 404".to_owned());
                     continue;
                 }
                 if !response.is_success() {
+                    let body = response.text();
+                    needs_refresh |= message_suggests_stale_query_id(&body);
                     last_error = Some(format!(
                         "HTTP {}: {}",
                         response.status,
-                        truncate(&response.text(), 200)
+                        truncate(&body, 200)
                     ));
                     continue;
                 }
@@ -1627,7 +1643,9 @@ impl TwitterClient {
                     needs_refresh: false,
                 })?;
                 if let Some(errors) = data.get("errors").and_then(Value::as_array) {
-                    last_error = Some(format_errors(errors));
+                    let message = format_errors(errors);
+                    needs_refresh |= message_suggests_stale_query_id(&message);
+                    last_error = Some(message);
                     continue;
                 }
                 let instructions = data
@@ -1648,7 +1666,7 @@ impl TwitterClient {
             Err(RefreshableError {
                 message: last_error
                     .unwrap_or_else(|| format!("Unknown error fetching {operation_name}")),
-                needs_refresh: true,
+                needs_refresh,
             })
         })
         .map_err(anyhow::Error::msg)
@@ -3142,6 +3160,14 @@ where
     }
 }
 
+/// True when an error message looks like X rejecting a stale query ID or
+/// operation shape, the only case where re-discovering query IDs can help.
+fn message_suggests_stale_query_id(message: &str) -> bool {
+    message.contains("Query: Unspecified")
+        || message.contains("GRAPHQL_VALIDATION_FAILED")
+        || message.contains("must be defined")
+}
+
 fn timeline_page_error(
     errors: &[Value],
     has_instructions: bool,
@@ -3154,10 +3180,7 @@ fn timeline_page_error(
     }
 
     let message = format_errors(errors);
-    let needs_refresh = refresh_on_query_error
-        && (message.contains("Query: Unspecified")
-            || message.contains("GRAPHQL_VALIDATION_FAILED")
-            || message.contains("must be defined"));
+    let needs_refresh = refresh_on_query_error && message_suggests_stale_query_id(&message);
     Some(RefreshableError {
         message,
         needs_refresh,
@@ -3995,6 +4018,26 @@ mod tests {
         assert_eq!(calls, 2);
         assert!(items[0].tweets.is_none());
         assert_eq!(items[1].tweets.as_ref().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn only_query_shape_errors_suggest_a_stale_query_id() {
+        assert!(super::message_suggests_stale_query_id("Query: Unspecified"));
+        assert!(super::message_suggests_stale_query_id(
+            "Variable \"$x\" must be defined"
+        ));
+        assert!(super::message_suggests_stale_query_id(
+            "{\"code\":\"GRAPHQL_VALIDATION_FAILED\"}"
+        ));
+        assert!(!super::message_suggests_stale_query_id(
+            "HTTP 429: Rate limit exceeded"
+        ));
+        assert!(!super::message_suggests_stale_query_id(
+            "HTTP 401: could not authenticate you"
+        ));
+        assert!(!super::message_suggests_stale_query_id(
+            "connection timed out"
+        ));
     }
 
     fn fake_page(ids: &[&str], next: Option<&str>) -> crate::TweetsPage {
