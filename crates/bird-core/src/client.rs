@@ -2531,12 +2531,9 @@ impl TwitterClient {
                     .into_iter()
                     .filter(|tweet| tweet.conversation_id.as_deref() == Some(root_id.as_str()))
                     .collect::<Vec<_>>();
-                filtered.sort_by_key(|tweet| {
-                    tweet
-                        .created_at
-                        .as_ref()
-                        .map(|created_at| created_at.to_owned())
-                });
+                // created_at is X's raw date string and does not sort
+                // chronologically; snowflake ids are time-ordered.
+                filtered.sort_by_key(|tweet| tweet_id_sort_key(&tweet.id));
                 filtered
             };
             let mut added = 0usize;
@@ -3473,6 +3470,11 @@ fn multipart_form_data(fields: &[MultipartField]) -> (Vec<u8>, String) {
     (body, boundary)
 }
 
+fn tweet_id_sort_key(id: &str) -> (usize, String) {
+    let trimmed = id.trim_start_matches('0');
+    (trimmed.len(), trimmed.to_owned())
+}
+
 fn maybe_wait_for_media_processing(
     client: &TwitterClient,
     media_id: &str,
@@ -3579,7 +3581,7 @@ mod tests {
         MediaProcessingInfo, MultipartField, TweetTimelinePage,
         bookmark_page_needs_empty_verification, bookmark_stop_cursor, bookmarks_variables,
         media_category_for_mime, multipart_form_data, poll_media_processing,
-        status_update_input_from_create_tweet_variables, timeline_page_error,
+        status_update_input_from_create_tweet_variables, timeline_page_error, tweet_id_sort_key,
         with_current_query_id,
     };
 
@@ -3694,6 +3696,24 @@ mod tests {
         );
         assert!(result.is_ok());
         assert_eq!(polls, 3);
+    }
+
+    #[test]
+    fn tweet_ids_sort_chronologically_not_by_date_string() {
+        let mut ids = vec![
+            "1000000000000000002",
+            "999999999999999999",
+            "1000000000000000001",
+        ];
+        ids.sort_by_key(|id| tweet_id_sort_key(id));
+        assert_eq!(
+            ids,
+            vec![
+                "999999999999999999",
+                "1000000000000000001",
+                "1000000000000000002"
+            ]
+        );
     }
 
     #[test]
