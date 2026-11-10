@@ -2750,35 +2750,33 @@ fn resolve_user_id(client: &TwitterClient, username_or_id: &str) -> CliResult<Re
         ));
     }
 
-    let is_numeric = raw.chars().all(|ch| ch.is_ascii_digit());
-
-    if let Some(handle) = normalize_handle(raw) {
-        match client.get_user_id_by_username(&handle) {
-            Ok((user_id, username, _name)) => {
-                return Ok(ResolvedUserTarget {
-                    user_id,
-                    username: Some(username),
-                });
-            }
-            Err(error) if !is_numeric => {
-                return Err(CliError::runtime(format!(
-                    "Failed to find user @{handle}: {error:#}"
-                )));
-            }
-            Err(_) => {}
-        }
-    }
-
-    if is_numeric {
+    // A bare all-digit argument is a user ID; an `@` prefix forces a handle lookup.
+    if is_bare_numeric_id(raw) {
         return Ok(ResolvedUserTarget {
             user_id: raw.to_owned(),
             username: None,
         });
     }
 
+    if let Some(handle) = normalize_handle(raw) {
+        return match client.get_user_id_by_username(&handle) {
+            Ok((user_id, username, _name)) => Ok(ResolvedUserTarget {
+                user_id,
+                username: Some(username),
+            }),
+            Err(error) => Err(CliError::runtime(format!(
+                "Failed to find user @{handle}: {error:#}"
+            ))),
+        };
+    }
+
     Err(CliError::usage(format!(
         "Invalid username: {username_or_id}"
     )))
+}
+
+fn is_bare_numeric_id(raw: &str) -> bool {
+    !raw.is_empty() && raw.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn normalize_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
@@ -2863,6 +2861,15 @@ fn rebuild_cookie_header(cookies: &TwitterCookies) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bare_digits_are_user_ids_but_at_prefix_forces_handle() {
+        assert!(super::is_bare_numeric_id("12345678"));
+        assert!(!super::is_bare_numeric_id("@12345678"));
+        assert!(!super::is_bare_numeric_id("alice"));
+        assert!(!super::is_bare_numeric_id("12ab"));
+        assert!(!super::is_bare_numeric_id(""));
+    }
+
     use super::{Cli, load_config_paths, parse_credential_input};
     use clap::Parser;
 
