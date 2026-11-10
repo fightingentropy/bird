@@ -2650,14 +2650,15 @@ impl TwitterClient {
                 return Ok(response);
             }
 
-            let retry_after = response
-                .headers
-                .get("retry-after")
-                .and_then(|value| value.parse::<u64>().ok())
-                .map(Duration::from_secs);
             let jitter = Duration::from_millis(rand::random::<u64>() % 500);
-            let backoff =
-                retry_after.unwrap_or_else(|| base_delay * 2u32.pow(attempt as u32) + jitter);
+            let Some(backoff) = retry_backoff(
+                response.headers.get("retry-after").map(String::as_str),
+                base_delay * 2u32.pow(attempt as u32) + jitter,
+            ) else {
+                // The server asked for a longer wait than we are willing to
+                // block for; let the caller see the 429/5xx instead.
+                return Ok(response);
+            };
             thread::sleep(backoff);
         }
         self.send_request(method, url, headers, body)
@@ -3446,6 +3447,22 @@ fn multipart_form_data(fields: &[MultipartField]) -> (Vec<u8>, String) {
     (body, boundary)
 }
 
+/// Longest `Retry-After` wait the client will sleep through before retrying.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
+
+/// Delay before a retry: the server's `Retry-After` (in seconds) when present,
+/// else `default`. Returns `None` when the server asks for more than
+/// `MAX_RETRY_AFTER`, meaning the request should not be retried.
+fn retry_backoff(retry_after: Option<&str>, default: Duration) -> Option<Duration> {
+    match retry_after.and_then(|value| value.trim().parse::<u64>().ok()) {
+        Some(seconds) => {
+            let wait = Duration::from_secs(seconds);
+            (wait <= MAX_RETRY_AFTER).then_some(wait)
+        }
+        None => Some(default),
+    }
+}
+
 /// Statuses that retrying another query id or endpoint cannot fix: expired
 /// or rejected credentials, and rate limiting.
 fn user_lookup_status_is_fatal(status: u32) -> bool {
@@ -3635,8 +3652,8 @@ mod tests {
         MediaProcessingInfo, MultipartField, TweetTimelinePage,
         bookmark_page_needs_empty_verification, bookmark_stop_cursor, bookmarks_variables,
         collect_user_tweets, media_category_for_mime, multipart_form_data, poll_media_processing,
-        status_update_input_from_create_tweet_variables, timeline_page_error, tweet_id_sort_key,
-        user_lookup_failure, user_lookup_status_is_fatal, with_current_query_id,
+        retry_backoff, status_update_input_from_create_tweet_variables, timeline_page_error,
+        tweet_id_sort_key, user_lookup_failure, user_lookup_status_is_fatal, with_current_query_id,
     };
 
     #[test]
@@ -3928,5 +3945,22 @@ mod tests {
             user_lookup_failure(&response),
             "HTTP 429: Rate limit exceeded"
         );
+    }
+
+    #[test]
+    fn retry_after_is_honored_only_up_to_the_cap() {
+        use std::time::Duration;
+        let default = Duration::from_millis(700);
+        assert_eq!(retry_backoff(None, default), Some(default));
+        assert_eq!(retry_backoff(Some("soon"), default), Some(default));
+        assert_eq!(
+            retry_backoff(Some("5"), default),
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            retry_backoff(Some("30"), default),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(retry_backoff(Some("900"), default), None);
     }
 }
