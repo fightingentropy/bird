@@ -757,41 +757,15 @@ impl TwitterClient {
                 EXPLORE_TAB_ENTERTAINMENT.to_owned(),
             ]
         });
-        let mut items = Vec::new();
-        let mut seen = std::collections::BTreeSet::new();
+        let mut items = collect_news_items(requested_tabs, count, |tab, timeline_id| {
+            self.fetch_news_tab(tab, timeline_id, count, ai_only, include_raw)
+        })?;
 
-        for tab in requested_tabs {
-            let Some(timeline_id) = explore_timeline_id(&tab) else {
-                continue;
-            };
-            let tab_items = self.fetch_news_tab(&tab, timeline_id, count, ai_only, include_raw)?;
-            for item in tab_items {
-                if seen.insert(item.headline.clone()) {
-                    items.push(item);
-                    if items.len() >= count {
-                        break;
-                    }
-                }
-            }
-            if items.len() >= count {
-                break;
-            }
-        }
-
-        if items.is_empty() {
-            anyhow::bail!("No news items found");
-        }
-
-        items.truncate(count);
         if with_tweets {
-            for item in &mut items {
-                let tweets = self
-                    .search(&item.headline, tweets_per_item, include_raw, None, None)?
-                    .tweets;
-                if !tweets.is_empty() {
-                    item.tweets = Some(tweets);
-                }
-            }
+            attach_news_tweets(&mut items, |headline| {
+                self.search(headline, tweets_per_item, include_raw, None, None)
+                    .map(|page| page.tweets)
+            });
         }
 
         Ok(items)
@@ -3103,6 +3077,71 @@ fn format_errors(errors: &[Value]) -> String {
         .join(", ")
 }
 
+/// Gathers news items across the requested tabs. A tab that fails is skipped so
+/// items already collected are kept; the error is reported only when nothing
+/// could be collected at all.
+fn collect_news_items<F>(
+    tabs: Vec<String>,
+    count: usize,
+    mut fetch_tab: F,
+) -> anyhow::Result<Vec<NewsItem>>
+where
+    F: FnMut(&str, &str) -> anyhow::Result<Vec<NewsItem>>,
+{
+    let mut items = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut last_error = None;
+
+    for tab in tabs {
+        let Some(timeline_id) = explore_timeline_id(&tab) else {
+            continue;
+        };
+        let tab_items = match fetch_tab(&tab, timeline_id) {
+            Ok(tab_items) => tab_items,
+            Err(error) => {
+                last_error = Some(error);
+                continue;
+            }
+        };
+        for item in tab_items {
+            if seen.insert(item.headline.clone()) {
+                items.push(item);
+                if items.len() >= count {
+                    break;
+                }
+            }
+        }
+        if items.len() >= count {
+            break;
+        }
+    }
+
+    if items.is_empty() {
+        return Err(match last_error {
+            Some(error) => error,
+            None => anyhow::anyhow!("No news items found"),
+        });
+    }
+
+    items.truncate(count);
+    Ok(items)
+}
+
+/// Looks up related tweets for each news item. This is best effort: a failed
+/// search leaves that item's tweets unset instead of failing the command.
+fn attach_news_tweets<F>(items: &mut [NewsItem], mut search: F)
+where
+    F: FnMut(&str) -> anyhow::Result<Vec<TweetData>>,
+{
+    for item in items {
+        if let Ok(tweets) = search(&item.headline)
+            && !tweets.is_empty()
+        {
+            item.tweets = Some(tweets);
+        }
+    }
+}
+
 fn timeline_page_error(
     errors: &[Value],
     has_instructions: bool,
@@ -3667,6 +3706,7 @@ mod tests {
         status_update_input_from_create_tweet_variables, timeline_page_error, tweet_id_sort_key,
         user_lookup_failure, user_lookup_status_is_fatal, with_current_query_id,
     };
+    use crate::types::NewsItem;
 
     #[test]
     fn bookmark_variables_match_the_current_web_request() {
@@ -3886,6 +3926,75 @@ mod tests {
 
         assert_eq!(result.message, "Query: Unspecified");
         assert!(result.needs_refresh);
+    }
+
+    fn news_item(headline: &str) -> NewsItem {
+        serde_json::from_value(json!({"id": headline, "headline": headline})).expect("news fixture")
+    }
+
+    #[test]
+    fn news_keeps_items_when_a_later_tab_fails() {
+        let mut calls = 0;
+        let items = super::collect_news_items(vec!["forYou".into(), "news".into()], 5, |_, _| {
+            calls += 1;
+            if calls == 1 {
+                Ok(vec![news_item("a"), news_item("b")])
+            } else {
+                anyhow::bail!("HTTP 429")
+            }
+        })
+        .expect("items from the first tab are kept");
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn news_skips_a_failing_tab_and_uses_the_next() {
+        let mut calls = 0;
+        let items = super::collect_news_items(vec!["forYou".into(), "news".into()], 5, |_, _| {
+            calls += 1;
+            if calls == 1 {
+                anyhow::bail!("HTTP 500")
+            }
+            Ok(vec![news_item("a")])
+        })
+        .expect("second tab used");
+
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn news_reports_the_error_when_every_tab_fails() {
+        let error =
+            super::collect_news_items(vec!["forYou".into()], 5, |_, _| anyhow::bail!("HTTP 429"))
+                .expect_err("nothing collected");
+
+        assert!(error.to_string().contains("HTTP 429"), "{error}");
+    }
+
+    #[test]
+    fn news_tweet_lookup_is_best_effort() {
+        let mut items = vec![news_item("a"), news_item("b")];
+        let mut calls = 0;
+        super::attach_news_tweets(&mut items, |headline| {
+            calls += 1;
+            if headline == "a" {
+                anyhow::bail!("HTTP 429")
+            }
+            Ok(vec![
+                serde_json::from_value(json!({
+                    "id": "1",
+                    "text": "t",
+                    "author": {"username": "u", "name": "n"}
+                }))
+                .expect("tweet fixture"),
+            ])
+        });
+
+        assert_eq!(calls, 2);
+        assert!(items[0].tweets.is_none());
+        assert_eq!(items[1].tweets.as_ref().map(Vec::len), Some(1));
     }
 
     fn fake_page(ids: &[&str], next: Option<&str>) -> crate::TweetsPage {
