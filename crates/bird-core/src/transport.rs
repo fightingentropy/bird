@@ -154,6 +154,28 @@ impl fmt::Debug for CurlTransport {
     }
 }
 
+/// Applied when the caller configures no timeout, so a stalled connection or
+/// proxy cannot block the process forever.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_TOTAL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Requests carrying a large body (media upload chunks) get more time.
+const DEFAULT_UPLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+const LARGE_BODY_BYTES: usize = 1024 * 1024;
+
+fn effective_timeout(request: &HttpRequest) -> Duration {
+    request.timeout.unwrap_or_else(|| {
+        if request
+            .body
+            .as_ref()
+            .is_some_and(|body| body.len() > LARGE_BODY_BYTES)
+        {
+            DEFAULT_UPLOAD_TIMEOUT
+        } else {
+            DEFAULT_TOTAL_TIMEOUT
+        }
+    })
+}
+
 impl CurlTransport {
     pub fn new(proxy: Option<String>) -> Self {
         Self {
@@ -177,9 +199,8 @@ impl CurlTransport {
         easy.reset();
 
         easy.url(&request.url)?;
-        if let Some(timeout) = request.timeout {
-            easy.timeout(timeout)?;
-        }
+        easy.connect_timeout(DEFAULT_CONNECT_TIMEOUT)?;
+        easy.timeout(effective_timeout(request))?;
         if let Some(proxy) = &self.proxy {
             easy.proxy(proxy)?;
         }
@@ -566,5 +587,30 @@ mod tests {
         assert!(!debug.contains("private body"));
         assert!(debug.contains("[REDACTED]"));
         assert!(debug.contains("application/json"));
+    }
+
+    #[test]
+    fn requests_without_a_timeout_get_a_default() {
+        let mut request = HttpRequest {
+            method: "GET".into(),
+            url: "https://x.com/".into(),
+            headers: Vec::new(),
+            body: None,
+            timeout: None,
+        };
+        assert_eq!(
+            super::effective_timeout(&request),
+            std::time::Duration::from_secs(60)
+        );
+        request.body = Some(vec![0; 2 * 1024 * 1024]);
+        assert_eq!(
+            super::effective_timeout(&request),
+            std::time::Duration::from_secs(300)
+        );
+        request.timeout = Some(std::time::Duration::from_secs(7));
+        assert_eq!(
+            super::effective_timeout(&request),
+            std::time::Duration::from_secs(7)
+        );
     }
 }
