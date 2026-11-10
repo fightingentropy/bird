@@ -35,17 +35,35 @@ pub(crate) fn get_cookies_from_inline(
     origins: &[Url],
     allowlist_names: Option<&HashSet<String>>,
 ) -> anyhow::Result<GetCookiesResult> {
+    let mut warnings = Vec::new();
     let raw_payload = if inline.source.ends_with("file")
         || inline.payload.ends_with(".json")
         || inline.payload.ends_with(".base64")
     {
-        fs::read_to_string(&inline.payload).unwrap_or_else(|_| inline.payload.clone())
+        match fs::read_to_string(&inline.payload) {
+            Ok(contents) => contents,
+            Err(error) => {
+                return Ok(GetCookiesResult {
+                    cookies: Vec::new(),
+                    warnings: vec![format!(
+                        "Failed to read inline cookie file {}: {error}",
+                        inline.payload
+                    )],
+                });
+            }
+        }
     } else {
         inline.payload.clone()
     };
 
     let decoded = try_decode_base64_json(&raw_payload).unwrap_or(raw_payload);
-    let cookies = parse_cookie_payload(&decoded).unwrap_or_default();
+    let cookies = parse_cookie_payload(&decoded).unwrap_or_else(|| {
+        warnings.push(
+            "Inline cookie payload is not valid cookie JSON (expected an array of cookies or an object with a \"cookies\" array)."
+                .to_owned(),
+        );
+        Vec::new()
+    });
     let hosts = hosts_from_origins(origins);
 
     let filtered = cookies
@@ -70,7 +88,7 @@ pub(crate) fn get_cookies_from_inline(
 
     Ok(GetCookiesResult {
         cookies: dedupe_cookies(filtered),
-        warnings: Vec::new(),
+        warnings,
     })
 }
 
@@ -162,5 +180,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.cookies[0].name, "guest_id");
+    }
+
+    #[test]
+    fn warns_when_the_payload_file_cannot_be_read() {
+        let result = get_cookies_from_inline(
+            &InlineSource {
+                source: "inline-file".to_owned(),
+                payload: "/nonexistent/bird-cookies.json".to_owned(),
+            },
+            &[Url::parse("https://x.com/").unwrap()],
+            None,
+        )
+        .unwrap();
+        assert!(result.cookies.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("/nonexistent/bird-cookies.json"));
+    }
+
+    #[test]
+    fn warns_when_the_payload_is_not_cookie_json() {
+        let result = get_cookies_from_inline(
+            &InlineSource {
+                source: "inline-json".to_owned(),
+                payload: "secret-value-not-json".to_owned(),
+            },
+            &[Url::parse("https://x.com/").unwrap()],
+            None,
+        )
+        .unwrap();
+        assert!(result.cookies.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert!(!result.warnings[0].contains("secret-value"));
     }
 }
