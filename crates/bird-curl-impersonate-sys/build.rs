@@ -114,7 +114,7 @@ fn main() {
             &target,
             &deployment_target,
             &manifest_path,
-            &source_root.join("patches"),
+            &source_root,
             &manifest_dir.join("build.rs"),
             compiler.path(),
         ))
@@ -193,7 +193,7 @@ fn build_fingerprint(
     target: &str,
     deployment_target: &str,
     manifest_path: &Path,
-    patches_dir: &Path,
+    source_root: &Path,
     build_rs_path: &Path,
     compiler_path: &Path,
 ) -> String {
@@ -201,7 +201,10 @@ fn build_fingerprint(
     hasher.update(target.as_bytes());
     hasher.update(deployment_target.as_bytes());
     hasher.update(read_bytes(manifest_path));
-    hash_dir_contents(&mut hasher, patches_dir);
+    // Hash the whole vendored tree (configure, Makefile.in, patches, ...) so
+    // an edit to any of it selects a new cache. The distfile archives are
+    // skipped: the manifest above pins their checksums.
+    hash_source_tree(&mut hasher, source_root);
     hasher.update(read_bytes(build_rs_path));
     hasher.update(compiler_path.to_string_lossy().as_bytes());
     if let Ok(output) = Command::new(compiler_path).arg("--version").output() {
@@ -215,11 +218,14 @@ fn read_bytes(path: &Path) -> Vec<u8> {
     fs::read(path).unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
 }
 
-fn hash_dir_contents(hasher: &mut Sha256, dir: &Path) {
-    let mut files = collect_files(dir);
+fn hash_source_tree(hasher: &mut Sha256, root: &Path) {
+    let distfiles = root.join("distfiles");
+    let mut files = collect_files(root);
+    files.retain(|file| !file.starts_with(&distfiles));
     files.sort();
     for file in files {
-        hasher.update(file.to_string_lossy().as_bytes());
+        let relative = file.strip_prefix(root).unwrap_or(&file);
+        hasher.update(relative.to_string_lossy().as_bytes());
         hasher.update(read_bytes(&file));
     }
 }
