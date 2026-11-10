@@ -592,9 +592,15 @@ impl CliContext {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("[err] {}", redact_sensitive_text(&error.message));
+        eprintln!("{}", error_line(&error.message));
         process::exit(error.code);
     }
+}
+
+/// Formats the final error line. Messages can embed remote text, so control
+/// characters are stripped after secrets are redacted.
+fn error_line(message: &str) -> String {
+    format!("[err] {}", clean_text(&redact_sensitive_text(message)))
 }
 
 fn run() -> CliResult<()> {
@@ -1104,7 +1110,7 @@ fn run_follow_action(
     let action = if follow { "follow" } else { "unfollow" };
     Err(CliError::runtime(format!(
         "Failed to {action} {display_name}: {}",
-        result.error.unwrap_or_else(|| "Unknown error".to_owned())
+        clean_text(&result.error.unwrap_or_else(|| "Unknown error".to_owned()))
     )))
 }
 
@@ -1930,7 +1936,7 @@ fn print_users_result(page: &UsersPage, json_output: bool, use_pagination: bool)
 
     print_users(&page.users);
     if let Some(cursor) = page.next_cursor.as_deref() {
-        eprintln!("[info] Next cursor: {cursor}");
+        eprintln!("[info] Next cursor: {}", clean_text(cursor));
     }
 }
 
@@ -2902,6 +2908,14 @@ mod tests {
         assert_eq!(super::clean_text(hostile), "a[31mred]0;titlebcd");
         assert_eq!(super::clean_text("line1\n\tline2 é─"), "line1\n\tline2 é─");
         assert_eq!(super::truncate_text("\u{1b}[2Jhello", 100), "[2Jhello");
+    }
+
+    #[test]
+    fn error_line_strips_terminal_control_characters() {
+        assert_eq!(
+            super::error_line("bad \u{1b}]0;title\u{7}\u{1b}[2Jtext"),
+            "[err] bad ]0;title[2Jtext"
+        );
     }
 
     #[test]
