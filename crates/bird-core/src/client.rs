@@ -3478,24 +3478,14 @@ fn maybe_wait_for_media_processing(
     media_id: &str,
     processing_info: Option<&Value>,
 ) -> anyhow::Result<()> {
-    let Some(mut state) = processing_info
+    let Some(state) = processing_info
         .and_then(parse_processing_info)
         .filter(|state| state.state != "succeeded")
     else {
         return Ok(());
     };
 
-    let mut attempts = 0usize;
-    while attempts < 20 {
-        if state.state == "failed" {
-            anyhow::bail!(
-                "{}",
-                state
-                    .error
-                    .unwrap_or_else(|| "Media processing failed".to_owned())
-            );
-        }
-        thread::sleep(Duration::from_secs(state.check_after_secs.max(1)));
+    poll_media_processing(state, MEDIA_PROCESSING_MAX_WAIT, thread::sleep, || {
         let status_url = format!(
             "{TWITTER_UPLOAD_URL}?{}",
             Serializer::new(String::new())
@@ -3512,16 +3502,47 @@ fn maybe_wait_for_media_processing(
             );
         }
         let data = response.json()?;
-        let Some(next_state) = data.get("processing_info").and_then(parse_processing_info) else {
-            break;
+        Ok(data.get("processing_info").and_then(parse_processing_info))
+    })
+}
+
+/// Total time to wait for the server to finish processing uploaded media.
+const MEDIA_PROCESSING_MAX_WAIT: Duration = Duration::from_secs(300);
+
+fn poll_media_processing(
+    mut state: MediaProcessingInfo,
+    max_wait: Duration,
+    mut sleep: impl FnMut(Duration),
+    mut fetch: impl FnMut() -> anyhow::Result<Option<MediaProcessingInfo>>,
+) -> anyhow::Result<()> {
+    let mut waited = Duration::ZERO;
+    loop {
+        if state.state == "failed" {
+            anyhow::bail!(
+                "{}",
+                state
+                    .error
+                    .unwrap_or_else(|| "Media processing failed".to_owned())
+            );
+        }
+        let delay = Duration::from_secs(state.check_after_secs.max(1));
+        if waited + delay > max_wait {
+            anyhow::bail!(
+                "Media processing did not finish within {} seconds (last state: {})",
+                max_wait.as_secs(),
+                state.state
+            );
+        }
+        sleep(delay);
+        waited += delay;
+        let Some(next_state) = fetch()? else {
+            return Ok(());
         };
         if next_state.state == "succeeded" {
-            break;
+            return Ok(());
         }
         state = next_state;
-        attempts += 1;
     }
-    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -3555,8 +3576,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        MultipartField, TweetTimelinePage, bookmark_page_needs_empty_verification,
-        bookmark_stop_cursor, bookmarks_variables, media_category_for_mime, multipart_form_data,
+        MediaProcessingInfo, MultipartField, TweetTimelinePage,
+        bookmark_page_needs_empty_verification, bookmark_stop_cursor, bookmarks_variables,
+        media_category_for_mime, multipart_form_data, poll_media_processing,
         status_update_input_from_create_tweet_variables, timeline_page_error,
         with_current_query_id,
     };
@@ -3626,6 +3648,52 @@ mod tests {
         );
         assert_eq!(bookmark_stop_cursor(None, false, false), Some(None));
         assert_eq!(bookmark_stop_cursor(Some("next"), false, false), None);
+    }
+
+    fn pending(secs: u64) -> MediaProcessingInfo {
+        MediaProcessingInfo {
+            state: "pending".to_owned(),
+            check_after_secs: secs,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn media_processing_wait_errors_when_budget_is_exhausted() {
+        let mut slept = std::time::Duration::ZERO;
+        let result = poll_media_processing(
+            pending(5),
+            std::time::Duration::from_secs(60),
+            |delay| slept += delay,
+            || Ok(Some(pending(5))),
+        );
+        let error = result.expect_err("still pending must be an error");
+        assert!(error.to_string().contains("did not finish"));
+        assert!(slept <= std::time::Duration::from_secs(60));
+    }
+
+    #[test]
+    fn media_processing_wait_succeeds_when_state_succeeds() {
+        let mut polls = 0;
+        let result = poll_media_processing(
+            pending(1),
+            std::time::Duration::from_secs(60),
+            |_| {},
+            || {
+                polls += 1;
+                Ok(Some(if polls < 3 {
+                    pending(1)
+                } else {
+                    MediaProcessingInfo {
+                        state: "succeeded".to_owned(),
+                        check_after_secs: 0,
+                        error: None,
+                    }
+                }))
+            },
+        );
+        assert!(result.is_ok());
+        assert_eq!(polls, 3);
     }
 
     #[test]
