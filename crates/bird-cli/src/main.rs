@@ -1094,9 +1094,9 @@ fn run_follow_action(
             .map(|username| format!("@{username}"))
             .unwrap_or(display_name);
         if follow {
-            println!("[ok] Now following {final_name}");
+            println!("[ok] Now following {}", clean_text(&final_name));
         } else {
-            println!("[ok] Unfollowed {final_name}");
+            println!("[ok] Unfollowed {}", clean_text(&final_name));
         }
         return Ok(());
     }
@@ -1851,7 +1851,11 @@ fn run_user_tweets(
 }
 
 fn print_current_user(user: &CurrentUser, credential_source: &str) {
-    println!("user: @{} ({})", user.username, user.name);
+    println!(
+        "user: @{} ({})",
+        clean_text(&user.username),
+        clean_text(&user.name)
+    );
     println!("user_id: {}", user.id);
     println!("engine: graphql");
     println!("credentials: {credential_source}");
@@ -1880,7 +1884,7 @@ fn print_query_ids_snapshot(snapshot: &QueryIdSnapshot) {
 fn print_about_profile(profile: &AboutProfile, handle: &str) {
     println!("[info] Account information for @{handle}:");
     if let Some(value) = profile.account_based_in.as_deref() {
-        println!("  Account based in: {value}");
+        println!("  Account based in: {}", clean_text(value));
     }
     if let Some(value) = profile.created_country_accurate {
         println!(
@@ -1892,10 +1896,10 @@ fn print_about_profile(profile: &AboutProfile, handle: &str) {
         println!("  Location accurate: {}", if value { "Yes" } else { "No" });
     }
     if let Some(value) = profile.source.as_deref() {
-        println!("source: {value}");
+        println!("source: {}", clean_text(value));
     }
     if let Some(value) = profile.learn_more_url.as_deref() {
-        println!("  Learn more: {value}");
+        println!("  Learn more: {}", clean_text(value));
     }
 }
 
@@ -1932,7 +1936,11 @@ fn print_users_result(page: &UsersPage, json_output: bool, use_pagination: bool)
 
 fn print_users(users: &[TwitterUser]) {
     for user in users {
-        println!("@{} ({})", user.username, user.name);
+        println!(
+            "@{} ({})",
+            clean_text(&user.username),
+            clean_text(&user.name)
+        );
         if let Some(description) = user.description.as_deref() {
             println!("  {}", truncate_text(description, 100));
         }
@@ -1950,13 +1958,13 @@ fn print_lists(lists: &[TwitterList]) {
         } else {
             "[public]"
         };
-        println!("{} {}", list.name, visibility);
+        println!("{} {}", clean_text(&list.name), visibility);
         if let Some(description) = list.description.as_deref() {
             println!("  {}", truncate_text(description, 100));
         }
         println!("  [info] {} members", list.member_count.unwrap_or(0));
         if let Some(owner) = list.owner.as_ref() {
-            println!("  Owner: @{}", owner.username);
+            println!("  Owner: @{}", clean_text(&owner.username));
         }
         println!("  https://x.com/i/lists/{}", list.id);
         println!("{}", "─".repeat(50));
@@ -1981,13 +1989,13 @@ fn print_news_items(items: &[NewsItem], json_output: bool, tweet_limit: Option<u
             .as_deref()
             .map(|value| format!("[{value}]"))
             .unwrap_or_default();
-        println!("\n{} {}", category, item.headline);
+        println!("\n{} {}", clean_text(&category), clean_text(&item.headline));
         if let Some(description) = item.description.as_deref() {
-            println!("  {description}");
+            println!("  {}", clean_text(description));
         }
         let mut meta = Vec::new();
         if let Some(time_ago) = item.time_ago.as_deref() {
-            meta.push(time_ago.to_owned());
+            meta.push(clean_text(time_ago));
         }
         if let Some(post_count) = item.post_count {
             meta.push(format!("{} posts", format_post_count(post_count)));
@@ -1996,7 +2004,7 @@ fn print_news_items(items: &[NewsItem], json_output: bool, tweet_limit: Option<u
             println!("  {}", meta.join(" | "));
         }
         if let Some(url) = item.url.as_deref() {
-            println!("  url: {url}");
+            println!("  url: {}", clean_text(url));
         }
         if let Some(tweets) = item.tweets.as_ref()
             && !tweets.is_empty()
@@ -2006,7 +2014,7 @@ fn print_news_items(items: &[NewsItem], json_output: bool, tweet_limit: Option<u
             for tweet in tweets.iter().take(limit) {
                 println!(
                     "    @{}: {}",
-                    tweet.author.username,
+                    clean_text(&tweet.author.username),
                     truncate_text(&tweet.text, 100)
                 );
             }
@@ -2272,26 +2280,34 @@ fn print_tweets(
         return;
     }
     for tweet in tweets {
-        println!("\n@{} ({}):", tweet.author.username, tweet.author.name);
+        println!(
+            "\n@{} ({}):",
+            clean_text(&tweet.author.username),
+            clean_text(&tweet.author.name)
+        );
         if let Some(article) = tweet.article.as_ref() {
             if tweet.text.starts_with(&article.title) {
-                println!("Article: {}", tweet.text);
+                println!("Article: {}", clean_text(&tweet.text));
             } else {
-                println!("Article: {}", article.title);
+                println!("Article: {}", clean_text(&article.title));
                 if let Some(preview) = article.preview_text.as_deref() {
-                    println!("   {preview}");
+                    println!("   {}", clean_text(preview));
                 }
             }
         } else {
-            println!("{}", tweet.text);
+            println!("{}", clean_text(&tweet.text));
         }
         if let Some(media) = tweet.media.as_ref() {
             for item in media {
-                println!("{} {}", media_label(&item.media_type), item.url);
+                println!(
+                    "{} {}",
+                    media_label(&item.media_type),
+                    clean_text(&item.url)
+                );
             }
         }
         if let Some(quoted) = tweet.quoted_tweet.as_deref() {
-            println!("> QT @{}:", quoted.author.username);
+            println!("> QT @{}:", clean_text(&quoted.author.username));
             let quoted_text = quoted
                 .article
                 .as_ref()
@@ -2302,20 +2318,26 @@ fn print_tweets(
             }
             if let Some(media) = quoted.media.as_ref() {
                 for item in media {
-                    println!("> {} {}", media_label(&item.media_type), item.url);
+                    println!(
+                        "> {} {}",
+                        media_label(&item.media_type),
+                        clean_text(&item.url)
+                    );
                 }
             }
             println!(
                 "> https://x.com/{}/status/{}",
-                quoted.author.username, quoted.id
+                clean_text(&quoted.author.username),
+                clean_text(&quoted.id)
             );
         }
         if let Some(created_at) = tweet.created_at.as_deref() {
-            println!("date: {created_at}");
+            println!("date: {}", clean_text(created_at));
         }
         println!(
             "url: https://x.com/{}/status/{}",
-            tweet.author.username, tweet.id
+            clean_text(&tweet.author.username),
+            clean_text(&tweet.id)
         );
         if show_separator {
             println!("{}", "─".repeat(50));
@@ -2331,8 +2353,21 @@ fn media_label(media_type: &str) -> &'static str {
     }
 }
 
+/// Removes control characters (C0, DEL and C1, including ESC) from text that
+/// came from a remote account so it cannot drive the terminal. Newline and tab
+/// are kept; carriage return is dropped because it can overwrite earlier output.
+fn clean_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
+        .collect()
+}
+
 fn truncate_text(value: &str, max_len: usize) -> String {
-    let mut truncated = value.chars().take(max_len + 1).collect::<String>();
+    let mut truncated = clean_text(value)
+        .chars()
+        .take(max_len + 1)
+        .collect::<String>();
     if truncated.chars().count() > max_len {
         truncated = truncated.chars().take(max_len).collect::<String>();
         truncated.push_str("...");
@@ -2861,6 +2896,14 @@ fn rebuild_cookie_header(cookies: &TwitterCookies) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_text_loses_terminal_control_characters() {
+        let hostile = "a\u{1b}[31mred\u{1b}]0;title\u{7}b\r\u{9b}c\u{0}d\u{7f}";
+        assert_eq!(super::clean_text(hostile), "a[31mred]0;titlebcd");
+        assert_eq!(super::clean_text("line1\n\tline2 é─"), "line1\n\tline2 é─");
+        assert_eq!(super::truncate_text("\u{1b}[2Jhello", 100), "[2Jhello");
+    }
+
     #[test]
     fn bare_digits_are_user_ids_but_at_prefix_forces_handle() {
         assert!(super::is_bare_numeric_id("12345678"));
