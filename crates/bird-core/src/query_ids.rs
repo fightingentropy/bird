@@ -622,13 +622,17 @@ fn fetch_and_extract(
         let Some(timeout) = deadline.timeout(REQUEST_TIMEOUT) else {
             break;
         };
-        let response = transport.send(&HttpRequest {
+        // One unreachable entry bundle must not lose what the others contain; if
+        // nothing is found at all the caller reports that.
+        let Ok(response) = transport.send(&HttpRequest {
             method: "GET".into(),
             url: bundle_url.clone(),
             headers: vec![],
             body: None,
             timeout: Some(timeout),
-        })?;
+        }) else {
+            continue;
+        };
         if !response.is_success() {
             continue;
         }
@@ -1173,6 +1177,49 @@ mod tests {
 
         assert!(snapshot.ids.contains_key("HomeTimeline"));
         assert_eq!(transport.chunk_requests(), MAX_LAZY_ERRORS);
+    }
+
+    /// Fails every request for the first entry bundle and serves HomeTimeline from the second.
+    struct FlakyEntryTransport;
+
+    impl HttpTransport for FlakyEntryTransport {
+        fn send(&self, request: &HttpRequest) -> anyhow::Result<HttpResponse> {
+            if request.url.ends_with("/flaky.00000001.js") {
+                anyhow::bail!("connection reset");
+            }
+            Ok(HttpResponse {
+                status: 200,
+                body: br#"e.exports={queryId:"home-id",operationName:"HomeTimeline"}"#.to_vec(),
+                ..HttpResponse::default()
+            })
+        }
+    }
+
+    #[test]
+    fn a_failing_entry_bundle_does_not_abort_discovery() {
+        let base = "https://abs.twimg.com/responsive-web/client-web";
+        let bundles = DiscoveredBundles {
+            pages: Vec::new(),
+            entry: vec![
+                format!("{base}/flaky.00000001.js"),
+                format!("{base}/main.abcdef01.js"),
+            ],
+            lazy: Vec::new(),
+        };
+
+        let extraction = fetch_and_extract(
+            &FlakyEntryTransport,
+            &bundles,
+            &names(&["HomeTimeline"]),
+            None,
+            Deadline::after(Duration::from_secs(30)),
+        )
+        .expect("one failing entry bundle is tolerated");
+
+        assert_eq!(
+            extraction.ids.get("HomeTimeline").map(String::as_str),
+            Some("home-id")
+        );
     }
 
     #[test]
