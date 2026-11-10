@@ -2161,56 +2161,15 @@ impl TwitterClient {
         max_pages: Option<usize>,
         page_delay: Duration,
     ) -> anyhow::Result<TweetsPage> {
-        let page_size = 20usize;
-        let hard_max_pages = 10usize;
-        let computed_max_pages = count.div_ceil(page_size).max(1);
-        let effective_max_pages = max_pages.unwrap_or(computed_max_pages).min(hard_max_pages);
-        let mut seen = std::collections::BTreeSet::new();
-        let mut tweets = Vec::new();
-        let mut cursor = cursor;
-        let mut next_cursor = None;
-        let mut pages_fetched = 0usize;
-
-        while tweets.len() < count {
-            if pages_fetched > 0 && page_delay > Duration::ZERO {
-                thread::sleep(page_delay);
-            }
-            let remaining = count.saturating_sub(tweets.len());
-            let page = self.fetch_user_tweets_page(
-                user_id,
-                remaining.min(page_size),
-                cursor.clone(),
-                include_raw,
-            )?;
-            pages_fetched += 1;
-            let mut added = 0usize;
-            for tweet in page.tweets {
-                if seen.insert(tweet.id.clone()) {
-                    tweets.push(tweet);
-                    added += 1;
-                    if tweets.len() >= count {
-                        break;
-                    }
-                }
-            }
-            if tweets.len() >= count {
-                break;
-            }
-            if page.next_cursor.is_none()
-                || page.next_cursor == cursor
-                || added == 0
-                || pages_fetched >= effective_max_pages
-            {
-                next_cursor = page.next_cursor;
-                break;
-            }
-            cursor = page.next_cursor.clone();
-            next_cursor = cursor.clone();
-        }
-        Ok(TweetsPage {
-            tweets,
-            next_cursor,
-        })
+        collect_user_tweets(
+            count,
+            cursor,
+            max_pages,
+            page_delay,
+            |page_count, page_cursor| {
+                self.fetch_user_tweets_page(user_id, page_count, page_cursor, include_raw)
+            },
+        )
     }
 
     fn fetch_home_timeline(
@@ -3573,12 +3532,76 @@ fn parse_processing_info(value: &Value) -> Option<MediaProcessingInfo> {
     })
 }
 
+/// Pages through a user's tweets until `count` is reached, a page limit is hit
+/// or the timeline ends. `next_cursor` is returned whenever more can be fetched
+/// without skipping tweets, including when `count` is reached exactly at the end
+/// of a page. If `count` is reached part-way through a page, the rest of that
+/// page was fetched but not returned, so no cursor is offered (resuming from the
+/// page's cursor would silently skip those tweets).
+fn collect_user_tweets(
+    count: usize,
+    cursor: Option<String>,
+    max_pages: Option<usize>,
+    page_delay: Duration,
+    mut fetch_page: impl FnMut(usize, Option<String>) -> anyhow::Result<TweetsPage>,
+) -> anyhow::Result<TweetsPage> {
+    let page_size = 20usize;
+    let hard_max_pages = 10usize;
+    let computed_max_pages = count.div_ceil(page_size).max(1);
+    let effective_max_pages = max_pages.unwrap_or(computed_max_pages).min(hard_max_pages);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut tweets = Vec::new();
+    let mut cursor = cursor;
+    let mut next_cursor = None;
+    let mut pages_fetched = 0usize;
+
+    while tweets.len() < count {
+        if pages_fetched > 0 && page_delay > Duration::ZERO {
+            thread::sleep(page_delay);
+        }
+        let remaining = count.saturating_sub(tweets.len());
+        let page = fetch_page(remaining.min(page_size), cursor.clone())?;
+        pages_fetched += 1;
+        let mut added = 0usize;
+        let mut page_tweets = page.tweets.into_iter();
+        for tweet in page_tweets.by_ref() {
+            if seen.insert(tweet.id.clone()) {
+                tweets.push(tweet);
+                added += 1;
+                if tweets.len() >= count {
+                    break;
+                }
+            }
+        }
+        if tweets.len() >= count {
+            if page_tweets.next().is_none() && page.next_cursor != cursor {
+                next_cursor = page.next_cursor;
+            }
+            break;
+        }
+        if page.next_cursor.is_none()
+            || page.next_cursor == cursor
+            || added == 0
+            || pages_fetched >= effective_max_pages
+        {
+            next_cursor = page.next_cursor;
+            break;
+        }
+        cursor = page.next_cursor.clone();
+        next_cursor = cursor.clone();
+    }
+    Ok(TweetsPage {
+        tweets,
+        next_cursor,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::{
-        MediaProcessingInfo, MultipartField, TweetTimelinePage,
+        MediaProcessingInfo, MultipartField, TweetTimelinePage, collect_user_tweets,
         bookmark_page_needs_empty_verification, bookmark_stop_cursor, bookmarks_variables,
         media_category_for_mime, multipart_form_data, poll_media_processing,
         status_update_input_from_create_tweet_variables, timeline_page_error, tweet_id_sort_key,
@@ -3803,5 +3826,63 @@ mod tests {
 
         assert_eq!(result.message, "Query: Unspecified");
         assert!(result.needs_refresh);
+    }
+
+    fn fake_page(ids: &[&str], next: Option<&str>) -> crate::TweetsPage {
+        let tweets = ids
+            .iter()
+            .map(|id| {
+                serde_json::from_value(json!({
+                    "id": id,
+                    "text": "t",
+                    "author": {"username": "u", "name": "n"}
+                }))
+                .expect("tweet fixture")
+            })
+            .collect();
+        crate::TweetsPage {
+            tweets,
+            next_cursor: next.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn user_tweets_keep_resume_cursor_when_count_ends_a_page() {
+        let page = collect_user_tweets(2, None, None, std::time::Duration::ZERO, |_, _| {
+            Ok(fake_page(&["1", "2"], Some("next")))
+        })
+        .expect("page");
+        assert_eq!(page.tweets.len(), 2);
+        assert_eq!(page.next_cursor.as_deref(), Some("next"));
+    }
+
+    #[test]
+    fn user_tweets_offer_no_cursor_that_would_skip_unreturned_tweets() {
+        let page = collect_user_tweets(2, None, None, std::time::Duration::ZERO, |_, _| {
+            Ok(fake_page(&["1", "2", "3"], Some("next")))
+        })
+        .expect("page");
+        assert_eq!(page.tweets.len(), 2);
+        assert_eq!(page.next_cursor, None);
+    }
+
+    #[test]
+    fn user_tweets_cursor_survives_the_page_cap() {
+        let mut n = 0;
+        let page = collect_user_tweets(
+            500,
+            None,
+            None,
+            std::time::Duration::ZERO,
+            |_, _| {
+                n += 1;
+                let ids: Vec<String> = (0..20).map(|i| format!("{}", n * 100 + i)).collect();
+                let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+                Ok(fake_page(&refs, Some(&format!("c{n}"))))
+            },
+        )
+        .expect("page");
+        assert_eq!(page.tweets.len(), 200);
+        assert_eq!(page.next_cursor.as_deref(), Some("c10"));
     }
 }
