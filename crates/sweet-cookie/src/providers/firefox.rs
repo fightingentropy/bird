@@ -155,26 +155,125 @@ fn resolve_firefox_cookies_db(profile: Option<&str>) -> Option<std::path::PathBu
             }
             continue;
         }
-        let mut entries = fs::read_dir(&root)
-            .ok()?
-            .flatten()
-            .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        entries.sort();
-        let picked = entries
-            .iter()
-            .find(|entry| entry.contains("default-release"))
-            .cloned()
-            .or_else(|| entries.first().cloned());
-        if let Some(entry) = picked {
-            let candidate = root.join(entry).join("cookies.sqlite");
-            if candidate.exists() {
-                return Some(candidate);
-            }
+        let ini_dir = match root.file_name().and_then(|name| name.to_str()) {
+            Some("Profiles") => root.parent().unwrap_or(&root).to_path_buf(),
+            _ => root.clone(),
+        };
+        if let Some(candidate) = pick_default_cookies_db(&root, &ini_dir) {
+            return Some(candidate);
         }
     }
     None
+}
+
+/// Pick the cookies database of the profile Firefox itself uses: the default
+/// named by profiles.ini, else the profile whose cookies.sqlite changed most
+/// recently.
+fn pick_default_cookies_db(
+    profiles_root: &std::path::Path,
+    ini_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    if let Ok(ini) = fs::read_to_string(ini_dir.join("profiles.ini"))
+        && let Some(profile_dir) = default_profile_dir_from_ini(&ini, ini_dir)
+    {
+        let candidate = profile_dir.join("cookies.sqlite");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    let mut newest: Option<(std::time::SystemTime, String, std::path::PathBuf)> = None;
+    for entry in fs::read_dir(profiles_root).ok()?.flatten() {
+        if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let candidate = entry.path().join("cookies.sqlite");
+        let Ok(modified) = fs::metadata(&candidate).and_then(|meta| meta.modified()) else {
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let better = match &newest {
+            None => true,
+            Some((best_time, best_name, _)) => {
+                modified > *best_time || (modified == *best_time && name < *best_name)
+            }
+        };
+        if better {
+            newest = Some((modified, name, candidate));
+        }
+    }
+    newest.map(|(_, _, path)| path)
+}
+
+/// The default profile directory according to profiles.ini: the `Default=` of
+/// an `[Install*]` section when present, else the `[Profile*]` marked
+/// `Default=1`.
+fn default_profile_dir_from_ini(
+    ini: &str,
+    ini_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    #[derive(Default)]
+    struct Section {
+        name: String,
+        path: Option<String>,
+        is_relative: bool,
+        is_default: bool,
+        default: Option<String>,
+    }
+    let mut sections: Vec<Section> = Vec::new();
+    for line in ini.lines() {
+        let line = line.trim();
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            sections.push(Section {
+                name: name.to_owned(),
+                is_relative: true,
+                ..Section::default()
+            });
+            continue;
+        }
+        let (Some(section), Some((key, value))) = (sections.last_mut(), line.split_once('='))
+        else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "Path" => section.path = Some(value.to_owned()),
+            "IsRelative" => section.is_relative = value != "0",
+            "Default" if section.name.starts_with("Install") => {
+                section.default = Some(value.to_owned());
+            }
+            "Default" => section.is_default = value == "1",
+            _ => {}
+        }
+    }
+
+    let resolve = |path: &str, is_relative: bool| {
+        if is_relative {
+            ini_dir.join(path)
+        } else {
+            std::path::PathBuf::from(path)
+        }
+    };
+    if let Some(path) = sections
+        .iter()
+        .filter(|section| section.name.starts_with("Install"))
+        .find_map(|section| section.default.as_deref())
+    {
+        // Install sections always store the path relative to profiles.ini.
+        return Some(resolve(path, true));
+    }
+    sections
+        .iter()
+        .filter(|section| section.name.starts_with("Profile") && section.is_default)
+        .find_map(|section| {
+            section
+                .path
+                .as_deref()
+                .map(|path| resolve(path, section.is_relative))
+        })
 }
 
 fn build_host_where_clause(hosts: &[String]) -> String {
@@ -266,5 +365,49 @@ mod tests {
         assert_eq!(cookies[0].name, "auth_token");
         assert!(cookies[0].secure);
         assert!(cookies[0].http_only);
+    }
+
+    fn touch_profile(root: &std::path::Path, name: &str, age_secs: u64) {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        let file = fs::File::create(dir.join("cookies.sqlite")).unwrap();
+        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn auto_pick_follows_profiles_ini_default() {
+        let temp_dir = tempdir().unwrap();
+        let root = temp_dir.path().join("Profiles");
+        touch_profile(&root, "aaa.default-release", 10);
+        touch_profile(&root, "zzz.work", 1000);
+        fs::write(
+            temp_dir.path().join("profiles.ini"),
+            "[Profile0]\nName=work\nIsRelative=1\nPath=Profiles/zzz.work\nDefault=1\n\n[General]\nStartWithLastProfile=1\n",
+        )
+        .unwrap();
+        let picked = pick_default_cookies_db(&root, temp_dir.path()).unwrap();
+        assert_eq!(picked, root.join("zzz.work/cookies.sqlite"));
+    }
+
+    #[test]
+    fn auto_pick_prefers_install_default_over_profile_default() {
+        let ini = "[Install4F96D1932A9F858E]\nDefault=Profiles/new.profile\nLocked=1\n\n[Profile0]\nPath=Profiles/old.profile\nDefault=1\n";
+        let dir = std::path::Path::new("/ff");
+        assert_eq!(
+            default_profile_dir_from_ini(ini, dir),
+            Some(dir.join("Profiles/new.profile"))
+        );
+    }
+
+    #[test]
+    fn auto_pick_falls_back_to_most_recent_cookie_db() {
+        let temp_dir = tempdir().unwrap();
+        let root = temp_dir.path().join("Profiles");
+        touch_profile(&root, "aaa.default-release", 5000);
+        touch_profile(&root, "mmm.used", 10);
+        fs::create_dir_all(root.join("zzz.empty")).unwrap();
+        let picked = pick_default_cookies_db(&root, temp_dir.path()).unwrap();
+        assert_eq!(picked, root.join("mmm.used/cookies.sqlite"));
     }
 }
