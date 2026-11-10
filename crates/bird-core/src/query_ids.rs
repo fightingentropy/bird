@@ -397,12 +397,9 @@ impl RuntimeQueryIdStore {
                     .collect(),
             },
         };
-        if let Some(parent) = self.cache_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(
+        crate::fs_util::write_atomic(
             &self.cache_path,
-            format!("{}\n", serde_json::to_string_pretty(&snapshot)?),
+            format!("{}\n", serde_json::to_string_pretty(&snapshot)?).as_bytes(),
         )?;
         *self
             .cached_snapshot()

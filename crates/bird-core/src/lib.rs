@@ -3,6 +3,7 @@
 mod client;
 mod credentials;
 mod features;
+mod fs_util;
 mod parser;
 mod query_ids;
 mod security;

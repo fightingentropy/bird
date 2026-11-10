@@ -231,10 +231,10 @@ impl RuntimeTransactionIdStore {
             ttl_ms: self.ttl.as_millis() as u64,
             state: state.clone(),
         };
-        if let Some(parent) = self.cache_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&self.cache_path, serde_json::to_string(&snapshot)?)?;
+        crate::fs_util::write_atomic(
+            &self.cache_path,
+            serde_json::to_string(&snapshot)?.as_bytes(),
+        )?;
         Ok(())
     }
 }

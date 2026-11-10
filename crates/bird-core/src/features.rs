@@ -31,13 +31,10 @@ pub fn features_snapshot() -> serde_json::Value {
 
 pub fn refresh_features_cache() -> anyhow::Result<(PathBuf, serde_json::Value)> {
     let path = features_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let payload = to_json_value(&load_feature_overrides());
-    fs::write(
+    crate::fs_util::write_atomic(
         &path,
-        format!("{}\n", serde_json::to_string_pretty(&payload)?),
+        format!("{}\n", serde_json::to_string_pretty(&payload)?).as_bytes(),
     )?;
     Ok((path, payload))
 }
