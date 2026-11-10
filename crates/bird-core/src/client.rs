@@ -2073,6 +2073,8 @@ impl TwitterClient {
             ("features", serde_json::to_string(&features)?),
             ("fieldToggles", serde_json::to_string(&field_toggles)?),
         ]);
+        let mut last_failure: Option<String> = None;
+        let mut fatal = false;
         for query_id in query_ids {
             let url = format!("{TWITTER_API_BASE}/{query_id}/UserByScreenName?{params}");
             let response = self.send_request("GET", &url, self.headers_json(), None)?;
@@ -2080,6 +2082,11 @@ impl TwitterClient {
                 continue;
             }
             if !response.is_success() {
+                last_failure = Some(user_lookup_failure(&response));
+                if user_lookup_status_is_fatal(response.status) {
+                    fatal = true;
+                    break;
+                }
                 continue;
             }
             let data = response.json()?;
@@ -2133,11 +2140,18 @@ impl TwitterClient {
             ),
         ];
         for url in urls {
+            if fatal {
+                break;
+            }
             let response = self.send_request("GET", &url, self.headers_json(), None)?;
             if response.status == 404 {
                 anyhow::bail!("User @{clean} not found");
             }
             if !response.is_success() {
+                last_failure = Some(user_lookup_failure(&response));
+                if user_lookup_status_is_fatal(response.status) {
+                    break;
+                }
                 continue;
             }
             let data = response.json()?;
@@ -2149,7 +2163,10 @@ impl TwitterClient {
                 first_string(&[data.get("name")]),
             ));
         }
-        anyhow::bail!("Unknown error looking up user")
+        match last_failure {
+            Some(failure) => anyhow::bail!("User lookup failed: {failure}"),
+            None => anyhow::bail!("Unknown error looking up user"),
+        }
     }
 
     pub fn get_user_tweets(
@@ -3429,6 +3446,20 @@ fn multipart_form_data(fields: &[MultipartField]) -> (Vec<u8>, String) {
     (body, boundary)
 }
 
+/// Statuses that retrying another query id or endpoint cannot fix: expired
+/// or rejected credentials, and rate limiting.
+fn user_lookup_status_is_fatal(status: u32) -> bool {
+    matches!(status, 401 | 403 | 429)
+}
+
+fn user_lookup_failure(response: &crate::transport::HttpResponse) -> String {
+    format!(
+        "HTTP {}: {}",
+        response.status,
+        truncate(&response.text(), 200)
+    )
+}
+
 fn tweet_id_sort_key(id: &str) -> (usize, String) {
     let trimmed = id.trim_start_matches('0');
     (trimmed.len(), trimmed.to_owned())
@@ -3601,11 +3632,11 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        MediaProcessingInfo, MultipartField, TweetTimelinePage, collect_user_tweets,
+        MediaProcessingInfo, MultipartField, TweetTimelinePage,
         bookmark_page_needs_empty_verification, bookmark_stop_cursor, bookmarks_variables,
-        media_category_for_mime, multipart_form_data, poll_media_processing,
+        collect_user_tweets, media_category_for_mime, multipart_form_data, poll_media_processing,
         status_update_input_from_create_tweet_variables, timeline_page_error, tweet_id_sort_key,
-        with_current_query_id,
+        user_lookup_failure, user_lookup_status_is_fatal, with_current_query_id,
     };
 
     #[test]
@@ -3869,20 +3900,33 @@ mod tests {
     #[test]
     fn user_tweets_cursor_survives_the_page_cap() {
         let mut n = 0;
-        let page = collect_user_tweets(
-            500,
-            None,
-            None,
-            std::time::Duration::ZERO,
-            |_, _| {
-                n += 1;
-                let ids: Vec<String> = (0..20).map(|i| format!("{}", n * 100 + i)).collect();
-                let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
-                Ok(fake_page(&refs, Some(&format!("c{n}"))))
-            },
-        )
+        let page = collect_user_tweets(500, None, None, std::time::Duration::ZERO, |_, _| {
+            n += 1;
+            let ids: Vec<String> = (0..20).map(|i| format!("{}", n * 100 + i)).collect();
+            let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+            Ok(fake_page(&refs, Some(&format!("c{n}"))))
+        })
         .expect("page");
         assert_eq!(page.tweets.len(), 200);
         assert_eq!(page.next_cursor.as_deref(), Some("c10"));
+    }
+
+    #[test]
+    fn user_lookup_stops_on_credential_and_rate_limit_statuses() {
+        for status in [401, 403, 429] {
+            assert!(user_lookup_status_is_fatal(status));
+        }
+        for status in [400, 404, 500, 502] {
+            assert!(!user_lookup_status_is_fatal(status));
+        }
+        let response = crate::transport::HttpResponse {
+            status: 429,
+            headers: Default::default(),
+            body: b"Rate limit exceeded".to_vec(),
+        };
+        assert_eq!(
+            user_lookup_failure(&response),
+            "HTTP 429: Rate limit exceeded"
+        );
     }
 }
