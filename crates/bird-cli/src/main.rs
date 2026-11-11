@@ -597,8 +597,7 @@ fn main() {
     }
 }
 
-/// Formats the final error line. Messages can embed remote text, so control
-/// characters are stripped after secrets are redacted.
+/// Formats the bookmark removal failure line from remote-supplied text.
 fn bookmark_failure_line(tweet_id: &str, error: Option<&str>) -> String {
     format!(
         "[err] Failed to remove bookmark for {}: {}",
@@ -607,6 +606,8 @@ fn bookmark_failure_line(tweet_id: &str, error: Option<&str>) -> String {
     )
 }
 
+/// Formats the final error line. Messages can embed remote text, so control
+/// characters are stripped after secrets are redacted.
 fn error_line(message: &str) -> String {
     format!("[err] {}", clean_text(&redact_sensitive_text(message)))
 }
