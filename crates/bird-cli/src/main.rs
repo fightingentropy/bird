@@ -949,12 +949,12 @@ fn run_check(context: &CliContext, global: &GlobalOptions) -> CliResult<()> {
         println!("[err] ct0: not found");
     }
     if let Some(source) = cookies.source.as_deref() {
-        println!("source: {source}");
+        println!("source: {}", clean_text(source));
     }
     if !resolved.warnings.is_empty() {
         println!("\n[warn] Warnings:");
         for warning in resolved.warnings {
-            println!("  - {warning}");
+            println!("  - {}", warning_text(&warning));
         }
     }
     if cookies.auth_token.is_some() && cookies.ct0.is_some() {
@@ -990,7 +990,7 @@ fn run_tweet(context: &CliContext, global: &GlobalOptions, text: &str) -> CliRes
     print_warnings(&resolved.warnings);
     ensure_credentials(&resolved.cookies)?;
     if let Some(source) = resolved.cookies.source.as_deref() {
-        eprintln!("source: {source}");
+        eprintln!("source: {}", clean_text(source));
     }
     let client = context.build_client(global, resolved.cookies)?;
     let media_ids = upload_media_if_any(&client, &media)?;
@@ -1001,7 +1001,7 @@ fn run_tweet(context: &CliContext, global: &GlobalOptions, text: &str) -> CliRes
             .as_deref()
             .ok_or_else(|| CliError::runtime("Tweet created but no ID returned"))?;
         println!("[ok] Tweet posted successfully!");
-        println!("url: https://x.com/i/status/{tweet_id}");
+        println!("url: {}", status_url(tweet_id));
         return Ok(());
     }
     Err(CliError::runtime(
@@ -1023,7 +1023,7 @@ fn run_reply(
     print_warnings(&resolved.warnings);
     ensure_credentials(&resolved.cookies)?;
     if let Some(source) = resolved.cookies.source.as_deref() {
-        eprintln!("source: {source}");
+        eprintln!("source: {}", clean_text(source));
     }
     eprintln!("[info] Replying to tweet: {tweet_id}");
     let client = context.build_client(global, resolved.cookies)?;
@@ -1035,7 +1035,7 @@ fn run_reply(
             .as_deref()
             .ok_or_else(|| CliError::runtime("Reply created but no ID returned"))?;
         println!("[ok] Reply posted successfully!");
-        println!("url: https://x.com/i/status/{tweet_id}");
+        println!("url: {}", status_url(tweet_id));
         return Ok(());
     }
     Err(CliError::runtime(
@@ -1871,7 +1871,7 @@ fn print_current_user(user: &CurrentUser, credential_source: &str) {
         clean_text(&user.username),
         clean_text(&user.name)
     );
-    println!("user_id: {}", user.id);
+    println!("user_id: {}", clean_text(&user.id));
     println!("engine: graphql");
     println!("credentials: {credential_source}");
 }
@@ -1981,7 +1981,7 @@ fn print_lists(lists: &[TwitterList]) {
         if let Some(owner) = list.owner.as_ref() {
             println!("  Owner: @{}", clean_text(&owner.username));
         }
-        println!("  https://x.com/i/lists/{}", list.id);
+        println!("  https://x.com/i/lists/{}", clean_text(&list.id));
         println!("{}", "─".repeat(50));
     }
 }
@@ -2498,9 +2498,18 @@ fn detect_mime(path: &str) -> Option<&'static str> {
     None
 }
 
+fn warning_text(warning: &str) -> String {
+    clean_text(&redact_sensitive_text(warning))
+}
+
+/// Status URL for an id returned by the remote; the id is cleaned before printing.
+fn status_url(tweet_id: &str) -> String {
+    format!("https://x.com/i/status/{}", clean_text(tweet_id))
+}
+
 fn print_warnings(warnings: &[String]) {
     for warning in warnings {
-        eprintln!("[warn] {}", redact_sensitive_text(warning));
+        eprintln!("[warn] {}", warning_text(warning));
     }
 }
 
@@ -2925,6 +2934,15 @@ mod tests {
             super::error_line("bad \u{1b}]0;title\u{7}\u{1b}[2Jtext"),
             "[err] bad ]0;title[2Jtext"
         );
+    }
+
+    #[test]
+    fn remote_ids_and_warnings_lose_terminal_control_characters() {
+        assert_eq!(
+            super::status_url("12\u{1b}]0;t\u{7}3"),
+            "https://x.com/i/status/12]0;t3"
+        );
+        assert_eq!(super::warning_text("w\u{1b}[2Jx"), "w[2Jx");
     }
 
     #[test]
