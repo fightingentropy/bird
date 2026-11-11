@@ -599,6 +599,14 @@ fn main() {
 
 /// Formats the final error line. Messages can embed remote text, so control
 /// characters are stripped after secrets are redacted.
+fn bookmark_failure_line(tweet_id: &str, error: Option<&str>) -> String {
+    format!(
+        "[err] Failed to remove bookmark for {}: {}",
+        clean_text(tweet_id),
+        clean_text(error.unwrap_or("Unknown error"))
+    )
+}
+
 fn error_line(message: &str) -> String {
     format!("[err] {}", clean_text(&redact_sensitive_text(message)))
 }
@@ -919,7 +927,7 @@ fn print_transport_info(info: &TransportInfo) {
     println!("scope: {}", info.scope);
     println!("valid: {}", info.valid);
     if let Some(error) = &info.error {
-        println!("error: {error}");
+        println!("error: {}", clean_text(error));
     }
 }
 
@@ -1055,8 +1063,8 @@ fn run_unbookmark(
         } else {
             failures += 1;
             eprintln!(
-                "[err] Failed to remove bookmark for {tweet_id}: {}",
-                result.error.unwrap_or_else(|| "Unknown error".to_owned())
+                "{}",
+                bookmark_failure_line(&tweet_id, result.error.as_deref())
             );
         }
     }
@@ -2915,6 +2923,18 @@ mod tests {
         assert_eq!(
             super::error_line("bad \u{1b}]0;title\u{7}\u{1b}[2Jtext"),
             "[err] bad ]0;title[2Jtext"
+        );
+    }
+
+    #[test]
+    fn bookmark_failure_line_strips_terminal_control_characters() {
+        assert_eq!(
+            super::bookmark_failure_line("1", Some("x\u{1b}]0;t\u{7}\u{1b}[2Jy")),
+            "[err] Failed to remove bookmark for 1: x]0;t[2Jy"
+        );
+        assert_eq!(
+            super::bookmark_failure_line("1", None),
+            "[err] Failed to remove bookmark for 1: Unknown error"
         );
     }
 
